@@ -15,3 +15,17 @@
 *.exe
 *.out
 *.app
+
+# autotools stuff
+Makefile
+Makefile.in
+aclocal.m4
+config.log
+config.status
+configure
+depcomp
+install-sh
+missing
+
+# backups
+*~
