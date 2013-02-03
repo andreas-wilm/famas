@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <assert.h>
 
 #include <argtable2.h>
 #include <zlib.h>
@@ -33,22 +34,36 @@ KSEQ_INIT(gzFile, gzread)
 
 
 #define MYNAME "fastq_filter"
-#define DEFAULT_MINQUAL 3
-#define DEFAULT_MINLEN 60
+#define DEFAULT_MIN3PQUAL 3
+#define DEFAULT_MIN5PQUAL 0
+#define DEFAULT_MINREADLEN 60
 #define DEFAULT_PHREDOFFSET 33
 #define XSTR(a) STR(a)
 #define STR(a) #a
 /* prints macro argument as string */
 
 typedef struct {
-char *infq1;
-char *infq2;
-char *outfq1;
-char *outfq2;
-int minqual;
-int phredoffset;
-int minlen;
+     char *infq1;
+     char *infq2;
+     char *outfq1;
+     char *outfq2;
+     int min5pqual;
+     int min3pqual;
+     int phredoffset;
+     int minreadlen;
 } args_t;
+
+typedef struct {
+     /* zero offset pos for trimming */
+     int pos5p;
+     int pos3p;
+} trim_pos_t;
+
+typedef struct {
+     int min5pqual;
+     int min3pqual;
+     int minreadlen;
+} trim_args_t;
 
 
 /* Logging macros. You have to use at least one fmt+string. Newline
@@ -59,7 +74,7 @@ int verbose = 1;
 /* print only if debug is true*/
 #define LOG_DEBUG(fmt, args...)     printk(stderr, debug, "DEBUG(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args)
 /* print only if verbose is true*/
-#define LOG_VERBOSE(fmt, args...)   printk(stderr, verbose, fmt, ## args)
+#define LOG_INFO(fmt, args...)   printk(stderr, verbose, fmt, ## args)
 /* always warn to stderr */
 #define LOG_WARN(fmt, args...)      printk(stderr, 1, "WARNING(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args)
 /* always print errors to stderr*/
@@ -91,11 +106,11 @@ printk(FILE *stream, int bool_flag, const char *fmt, ...)
 
 
 
-int file_exists(char *fname) 
+/* from 
+ * http://stackoverflow.com/questions/230062/whats-the-best-way-to-check-if-a-file-exists-in-c-cross-platform 
+ */
+int file_exists(const char *fname) 
 {
-  /* from 
-   * http://stackoverflow.com/questions/230062/whats-the-best-way-to-check-if-a-file-exists-in-c-cross-platform 
-   */
   if (access(fname, F_OK) != -1) {
       return 1;
   } else {
@@ -104,17 +119,19 @@ int file_exists(char *fname)
 }
 
 
-void dump_args(args_t *args) 
+void dump_args(const args_t *args) 
 {
      LOG_DEBUG("args:\n");
      LOG_DEBUG("  infq1       = %s\n", args->infq1);
      LOG_DEBUG("  infq2       = %s\n", args->infq2);
      LOG_DEBUG("  outfq1      = %s\n", args->outfq1);
      LOG_DEBUG("  outfq2      = %s\n", args->outfq2);
-     LOG_DEBUG("  minqual     = %d\n", args->minqual);
+     LOG_DEBUG("  min5pqual     = %d\n", args->min5pqual);
+     LOG_DEBUG("  min3pqual     = %d\n", args->min3pqual);
      LOG_DEBUG("  phredoffset = %d\n", args->phredoffset);
-     LOG_DEBUG("  minlen      = %d\n", args->minlen);
+     LOG_DEBUG("  minreadlen      = %d\n", args->minreadlen);
 }
+
 
 void free_args(args_t *args)
 {
@@ -125,13 +142,13 @@ void free_args(args_t *args)
 }
 
 
-/* will parse command line arguments and set members in args
- * accodingly. returns -1 on error (logic errors etc). caller has to
- * free args members using free_args(), even if -1 was returned
+/* Parses command line arguments and sets members in args accordingly.
+ * Also sets defaults and performs logic checks. Returns -1 on error
+ * Caller has to free args members using free_args(), even if -1 was
+ * returned.
  */
 int parse_args(args_t *args, int argc, char *argv[])
 {
-
      int nerrors;
 
      /* argtable command line parsing:
@@ -158,19 +175,23 @@ int parse_args(args_t *args, int argc, char *argv[])
      struct arg_file *opt_outfq2 = arg_file0(
           "p", "out2", "<file>",
           "Other output FastQ file if paired-end input (will be gzipped)");
-     struct arg_int *opt_minqual = arg_int0(
-          "q", "minqual", "<int>",
-          "Trim from end if base-call quality below this value."
+     struct arg_int *opt_min5pqual = arg_int0(
+          "Q", "min5pqual", "<int>",
+          "Trim from start/5'-end if base-call quality below this value."
+          " Default: " XSTR(DEFAULT_MIN5PQUAL));
+     struct arg_int *opt_min3pqual = arg_int0(
+          "q", "min3pqual", "<int>",
+          "Trim from end/3'-end if base-call quality below this value."
           " Default: " XSTR(DEFAULT_MINQUAL));
      struct arg_int *opt_phredoffset = arg_int0(
-          "Q", "phred", "<33|64>",
+          "e", "phred", "<33|64>",
           "Qualities are ASCII-encoded Phred +33 (e.g. Sanger, SRA,"
           " Illumina 1.8+) or +64 (e.g. Illumina 1.3-1.7)."
           " Default: " XSTR(DEFAULT_PHREDOFFSET));
-     struct arg_int *opt_minlen = arg_int0(
+     struct arg_int *opt_minreadlen = arg_int0(
           "l", "minlen", "<int>",
           "Discard reads if below this length (discard both reads if"
-          " either is below this limit). Default: " XSTR(DEFAULT_MINLEN));
+          " either is below this limit). Default: " XSTR(DEFAULT_MINREADLEN));
      struct arg_lit *opt_help = arg_lit0(
           "h", "help",
           "Print this help and exit");
@@ -184,12 +205,13 @@ int parse_args(args_t *args, int argc, char *argv[])
                                              * to store */
      
      /* set defaults */
-     opt_minlen->ival[0] = DEFAULT_MINLEN;
-     opt_minqual->ival[0] = DEFAULT_MINQUAL;
+     opt_minreadlen->ival[0] = DEFAULT_MINREADLEN;
+     opt_min5pqual->ival[0] = DEFAULT_MIN5PQUAL;
+     opt_min3pqual->ival[0] = DEFAULT_MIN3PQUAL;
      opt_phredoffset->ival[0] = DEFAULT_PHREDOFFSET;
      
      void *argtable[] = {opt_infq1, opt_infq2, opt_outfq1, opt_outfq2,
-                         opt_minqual, opt_minlen, opt_phredoffset,
+                         opt_min5pqual, opt_min3pqual, opt_minreadlen, opt_phredoffset,
                          opt_help, opt_verbose, opt_debug,
                          opt_end};    
      
@@ -233,9 +255,6 @@ int parse_args(args_t *args, int argc, char *argv[])
      }
 
      if (opt_infq2->count) {
-          /* FIXME argtable bug? segfault if --i1 without arg
-             fprintf(stderr, "opt_infq2->count=%d opt_infq2->filename[0]=%s\n", opt_infq2->count, opt_infq2->filename[0]);
-          */
           args->infq2 = strdup(opt_infq2->filename[0]);
           if (0 == strcmp(args->infq2, args->infq1)) {
                LOG_ERROR("%s\n", "The two input fastq files are the same file");
@@ -268,9 +287,16 @@ int parse_args(args_t *args, int argc, char *argv[])
           }
      }
 
-     args->minqual = opt_minqual->ival[0];
-     if (args->minqual<0) {
-          LOG_ERROR("Invalid quality '%d'\n", args->minqual);          
+     args->min5pqual = opt_min5pqual->ival[0];
+     if (args->min5pqual<0) {
+          LOG_ERROR("Invalid quality '%d'\n", args->min5pqual);          
+          arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
+          return -1;            
+     }
+
+     args->min3pqual = opt_min3pqual->ival[0];
+     if (args->min3pqual<0) {
+          LOG_ERROR("Invalid quality '%d'\n", args->min3pqual);          
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
           return -1;            
      }
@@ -283,9 +309,9 @@ int parse_args(args_t *args, int argc, char *argv[])
      }
 
      
-     args->minlen = opt_minlen->ival[0];
-     if (args->minlen<1) {
-          LOG_ERROR("Invalid length '%d'\n", args->minlen);          
+     args->minreadlen = opt_minreadlen->ival[0];
+     if (args->minreadlen<1) {
+          LOG_ERROR("Invalid length '%d'\n", args->minreadlen);          
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
           return -1;            
      }
@@ -296,18 +322,82 @@ int parse_args(args_t *args, int argc, char *argv[])
           verbose=1;
      }
      
+     /* Whew! */
+
      arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
      return 0;
 }
 
 
+/* returns -1 if read is to be discarded. otherwise trim_pos will hold
+ * valid trimming positions (zero-offset)
+ */
+int calc_trim_pos(trim_pos_t *trim_pos, 
+                  const kseq_t *seq, const int phredoffset,
+                  const trim_args_t *trim_args)
+{
+     int i;
 
-static inline
-int gzprintf_fastq(gzFile fp, kseq_t *s) {
-     return gzprintf(fp, "@%s\n%s\n+\n%s\n",
-                     s->name.s, s->seq.s, s->qual.s);
+     assert(trim_args->minreadlen > 0);
+
+     trim_pos->pos5p = -1;
+     trim_pos->pos3p = -1;
+
+     if (trim_args->minreadlen > seq->qual.l) {
+          return -1;
+     }
+
+     /* 5p end */
+     for (i=0; i<seq->qual.l - trim_args->minreadlen; i++) {
+          int q = seq->qual.s[i] - phredoffset;
+          /*LOG_DEBUG("Checking 5p pos %d with q %d\n", i, q);*/
+          if (q >= trim_args->min5pqual) {
+               trim_pos->pos5p = i;
+               break;
+          }
+     }
+     if (trim_pos->pos5p == -1) {
+          return -1;
+     }
+
+     /* 3p end */
+     for (i=seq->qual.l-1; i >= trim_args->minreadlen-1; i--) {/* FIXME max min_read_len trim_pos_5p? */
+          int q = seq->qual.s[i]-phredoffset;
+          /*LOG_DEBUG("Checking 3p pos %d with q %d\n", i, q);*/
+          if (q >= trim_args->min3pqual) {
+               trim_pos->pos3p = i;
+               break;
+          }
+     }
+     if (trim_pos->pos3p == -1) {
+          return -1;
+     }
+#if 0
+      LOG_FIXME("trim_pos_5p = %d\n", trim_pos->pos5p);
+      LOG_FIXME("trim_pos_3p = %d\n", trim_pos->pos3p);
+
+      for (i=0; i<seq->qual.l; i++) {
+           LOG_WARN("%d: %c %d\n", i, seq->qual.s[i], seq->qual.s[i]-phredoffset);
+      }
+#endif
+      
+      if (trim_pos->pos3p - trim_pos->pos5p + 1 < trim_args->minreadlen) {
+           return -1;
+      }
+      
+      return 0;
 }
 
+
+int gzprintf_fastq(gzFile fp, kseq_t *s) {
+     int ret;
+     ret = gzprintf(fp, "@%s", s->name.s);
+     if (s->comment.l) {
+         ret += gzprintf(fp, " %s", s->comment.s);
+     }
+     ret += gzprintf(fp, "\n%s\n+\n%s\n", s->seq.s, s->qual.s);
+     return ret;
+ }
 
 
 int main(int argc, char *argv[])
@@ -317,11 +407,13 @@ int main(int argc, char *argv[])
     gzFile fp_outfq1 = NULL, fp_outfq2 = NULL;
     kseq_t *seq1 = NULL, *seq2 = NULL;
     int len1 = -1, len2 = -1;
-    int paired_end = 0; /* bool paired end mode */
+    int paired = 0; /* bool paired end mode */
     int n_reads_in = 0, n_reads_out = 0; /* number of reads or pairs */
+    trim_args_t trim_args;
     int rc = EXIT_SUCCESS;
 
     if (parse_args(&args, argc, argv)) {
+         free_args(& args);
          return EXIT_FAILURE;
     }
     if (debug) {
@@ -329,7 +421,7 @@ int main(int argc, char *argv[])
     }
 
     if (args.infq2) {
-         paired_end = 1;
+         paired = 1;
     }
 
     fp_infq1 = (0 == strcmp(args.infq1, "-")) ? 
@@ -342,7 +434,7 @@ int main(int argc, char *argv[])
          return EXIT_FAILURE;
     }
 
-	if (paired_end) {
+	if (paired) {
          fp_infq2 = gzopen(args.infq2, "r");
          fp_outfq2 = gzopen(args.outfq2, "w");
          if (NULL == fp_infq2 || NULL == fp_outfq2) {
@@ -352,13 +444,22 @@ int main(int argc, char *argv[])
          }
     }
 
+
+
+    trim_args.min5pqual = args.min5pqual;
+    trim_args.min3pqual = args.min3pqual;;
+    trim_args.minreadlen = args.minreadlen;
+
 	seq1 = kseq_init(fp_infq1);
-	if (paired_end) {
+	if (paired) {
          seq2 = kseq_init(fp_infq2);
     }
     n_reads_in = n_reads_out = 0;
 	while ((len1 = kseq_read(seq1)) >= 0) {
-         if (paired_end) {
+         int discard = 0;
+         trim_pos_t trim_pos;
+
+         if (paired) {
               if ((len2 = kseq_read(seq2)) < 0) {
                    LOG_ERROR("%s\n", "Reached premature end in second file. Still received reads from first file.");
                    rc = EXIT_FAILURE;
@@ -368,15 +469,15 @@ int main(int argc, char *argv[])
          n_reads_in+=1;
 
 
-
-         LOG_FIXME("%s\n", "filtering goes here. Note: encoding issues!");
-         if (n_reads_in==1) {
-              int i;
-              for (i=0; i<seq1->qual.l; i++) {
-                   LOG_WARN("%d: %c %d\n", i, seq1->qual.s[i], seq1->qual.s[i]-args.phredoffset);
-              }
+         if (0 != calc_trim_pos(&trim_pos, seq1, args.phredoffset, &trim_args)) {
+              discard = 1;
          }
-         exit(1);
+         LOG_FIXME("%s\n", "actual filtering missing");
+
+         if (discard) {
+              LOG_FIXME("Discarding %s\n", seq1->name.s);
+              continue;
+         }
 
          if (0 >= gzprintf_fastq(fp_outfq1, seq1)) {
               LOG_ERROR("Couldn't write to %s (after successfully writing %d reads).\n",
@@ -385,7 +486,8 @@ int main(int argc, char *argv[])
               goto free_and_exit;
          }
 
-         if (paired_end) {
+         if (paired) {
+              /* FIXME add id check as in pairedend_read_order.sh ? */
               if (0 >= gzprintf_fastq(fp_outfq2, seq2)) {
                    LOG_ERROR("Couldn't write to %s (after successfully writing %d reads).\n",
                              args.outfq2, n_reads_out);
@@ -395,16 +497,19 @@ int main(int argc, char *argv[])
          }
          n_reads_out+=1;
 	}
-	if (paired_end) {
+	if (paired) {
          LOG_FIXME("%s\n", "FIXME: check if second file if != NULL still has seqs and warn");
     }
 
 free_and_exit:
 
+    LOG_INFO("%d %s in. %d %s out\n", n_reads_in, paired?"pairs":"reads", 
+             n_reads_out, paired?"pairs":"reads");
+
 	kseq_destroy(seq1);
 	gzclose(fp_infq1);
 	gzclose(fp_outfq1);
-    if (paired_end) {
+    if (paired) {
          kseq_destroy(seq2);
          gzclose(fp_infq2);
          gzclose(fp_outfq2);
