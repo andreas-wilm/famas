@@ -53,6 +53,7 @@ typedef struct {
      int min3pqual;
      int phredoffset;
      int minreadlen;
+     int force_overwite;
 } args_t;
 
 typedef struct {
@@ -135,14 +136,15 @@ int file_exists(const char *fname)
 void dump_args(const args_t *args) 
 {
      LOG_DEBUG("%s\n", "args:");
-     LOG_DEBUG("  infq1       = %s\n", args->infq1);
-     LOG_DEBUG("  infq2       = %s\n", args->infq2);
-     LOG_DEBUG("  outfq1      = %s\n", args->outfq1);
-     LOG_DEBUG("  outfq2      = %s\n", args->outfq2);
-     LOG_DEBUG("  min5pqual     = %d\n", args->min5pqual);
-     LOG_DEBUG("  min3pqual     = %d\n", args->min3pqual);
-     LOG_DEBUG("  phredoffset = %d\n", args->phredoffset);
+     LOG_DEBUG("  infq1           = %s\n", args->infq1);
+     LOG_DEBUG("  infq2           = %s\n", args->infq2);
+     LOG_DEBUG("  outfq1          = %s\n", args->outfq1);
+     LOG_DEBUG("  outfq2          = %s\n", args->outfq2);
+     LOG_DEBUG("  min5pqual       = %d\n", args->min5pqual);
+     LOG_DEBUG("  min3pqual       = %d\n", args->min3pqual);
+     LOG_DEBUG("  phredoffset     = %d\n", args->phredoffset);
      LOG_DEBUG("  minreadlen      = %d\n", args->minreadlen);
+     LOG_DEBUG("  force_overwite  = %d\n", args->force_overwite);
 }
 
 
@@ -194,7 +196,7 @@ int parse_args(args_t *args, int argc, char *argv[])
           " Default: " XSTR(DEFAULT_MIN5PQUAL));
      struct arg_int *opt_min3pqual = arg_int0(
           "q", "min3pqual", "<int>",
-          "Trim from end/3'-end if base-call quality below this value."
+          "Trim from end/3'-end if base-call quality below this value (Illumina guidelines recommend 3)."
           " Default: " XSTR(DEFAULT_MIN3PQUAL));
      struct arg_int *opt_phredoffset = arg_int0(
           "e", "phred", "<33|64>",
@@ -205,6 +207,9 @@ int parse_args(args_t *args, int argc, char *argv[])
           "l", "minlen", "<int>",
           "Discard reads if below this length (discard both reads if"
           " either is below this limit). Default: " XSTR(DEFAULT_MINREADLEN));
+     struct arg_lit *opt_force_overwite  = arg_lit0(
+          "f", "force-overwite", 
+          "Force overwriting of files");
      struct arg_lit *opt_help = arg_lit0(
           "h", "help",
           "Print this help and exit");
@@ -224,7 +229,8 @@ int parse_args(args_t *args, int argc, char *argv[])
      opt_phredoffset->ival[0] = DEFAULT_PHREDOFFSET;
      
      void *argtable[] = {opt_infq1, opt_infq2, opt_outfq1, opt_outfq2,
-                         opt_min5pqual, opt_min3pqual, opt_minreadlen, opt_phredoffset,
+                         opt_min5pqual, opt_min3pqual, opt_minreadlen, 
+                         opt_phredoffset, opt_force_overwite,
                          opt_help, opt_verbose, opt_debug,
                          opt_end};    
      
@@ -253,6 +259,13 @@ int parse_args(args_t *args, int argc, char *argv[])
           return -1;
      }
      
+     args->force_overwite = opt_force_overwite->count;
+     verbose = opt_verbose->count;
+     debug = opt_debug->count;
+     if (debug) {
+          verbose=1;
+     }
+
      args->infq1 = strdup(opt_infq1->filename[0]);
      if (0 != strncmp(args->infq1, "-", 1) && ! file_exists(args->infq1)) {
           LOG_ERROR("File %s does not exist\n", args->infq1);
@@ -261,7 +274,7 @@ int parse_args(args_t *args, int argc, char *argv[])
      }
 
      args->outfq1 = strdup(opt_outfq1->filename[0]);
-     if (0 != strncmp(args->outfq1, "-", 1) && file_exists(args->outfq1)) {
+     if (0 != strncmp(args->outfq1, "-", 1) && file_exists(args->outfq1) && ! args->force_overwite) {
           LOG_ERROR("Cowardly refusing to overwrite existing file %s\n", args->outfq1);
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
           return -1;
@@ -287,7 +300,7 @@ int parse_args(args_t *args, int argc, char *argv[])
           }
 
           args->outfq2 = strdup(opt_outfq2->filename[0]);
-          if (file_exists(args->outfq2)) {
+          if (file_exists(args->outfq2) && ! args->force_overwite) {
                LOG_ERROR("Cowardly refusing to overwrite existing file %s\n", args->outfq2);
                arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
                return -1;
@@ -329,11 +342,6 @@ int parse_args(args_t *args, int argc, char *argv[])
           return -1;            
      }
      
-     verbose = opt_verbose->count;
-     debug = opt_debug->count;
-     if (debug) {
-          verbose=1;
-     }
      
      /* Whew! */
 
@@ -669,7 +677,6 @@ int main(int argc, char *argv[])
     return test();
 #endif
 
-
     if (parse_args(&args, argc, argv)) {
          free_args(& args);
          return EXIT_FAILURE;
@@ -719,7 +726,7 @@ int main(int argc, char *argv[])
               if ((len2 = kseq_read(seq2)) < 0) {
                    LOG_ERROR("%s\n", "Reached premature end in second file."
                              " Still received reads from first file."
-                             " Already produced results Exiting...");
+                             " Don't trust already produced results. Exiting...");
                    rc = EXIT_FAILURE;
                    goto free_and_exit;
               }
@@ -766,7 +773,7 @@ int main(int argc, char *argv[])
          if ((len2 = kseq_read(seq2)) >= 0) {
               LOG_ERROR("%s\n", "Reached premature end in first file."
                              " Still received reads from second file."
-                             " Already produced results Exiting...");
+                             " Don't trust already produced results. Exiting...");
                    rc = EXIT_FAILURE;
                    goto free_and_exit;
               }
