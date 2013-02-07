@@ -19,4 +19,5 @@
 # backups
 *~
 
+.deps
 fastq_filter
