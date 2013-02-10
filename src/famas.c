@@ -89,37 +89,29 @@ int trace = 0;
 #endif
 
 /* print only if debug is true*/
-#define LOG_DEBUG(fmt, args...)     printk(stderr, debug, "DEBUG(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args)
+#define LOG_DEBUG(fmt, args...)     {if (debug) {vout(stderr, "DEBUG(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args);}}
 /* print only if verbose is true*/
-#define LOG_INFO(fmt, args...)   printk(stderr, verbose, fmt, ## args)
+#define LOG_INFO(fmt, args...)      {if (verbose) {vout(stderr, fmt, ## args);}}
 /* always warn to stderr */
-#define LOG_WARN(fmt, args...)      printk(stderr, 1, "WARNING(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args)
+#define LOG_WARN(fmt, args...)      vout(stderr, "WARNING(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args)
 /* always print errors to stderr*/
-#define LOG_ERROR(fmt, args...)     printk(stderr, 1, "ERROR(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
+#define LOG_ERROR(fmt, args...)     vout(stderr, "ERROR(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
 /* always print fixme's */
-#define LOG_FIXME(fmt, args...)     printk(stderr, 1, "FIXME(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
-#define LOG_TEST(fmt, args...)     printk(stderr, 1, "TESTING(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
+#define LOG_FIXME(fmt, args...)     vout(stderr, "FIXME(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
+#define LOG_TEST(fmt, args...)      vout(stderr, "TESTING(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
 
 /* Taken from the Linux kernel source and slightly modified.
- * bool_flag: print or don't
  */
 int
-printk(FILE *stream, int bool_flag, const char *fmt, ...)
+vout(FILE *stream, const char *fmt, ...)
 {                
      va_list args;
-     static char printk_buf[8192];
-     int printed_len=0;
+     int rc;
      
-     if (bool_flag) {
-          /* Emit the output into the temporary buffer */
-          va_start(args, fmt);
-          printed_len = vsnprintf(printk_buf, sizeof(printk_buf), fmt, args);
-          va_end(args);
-          
-          fprintf(stream, "%s", printk_buf);
-          fflush(stream);        
-     }
-     return printed_len;
+     va_start(args, fmt);
+     rc = vfprintf(stream, fmt, args);
+     va_end(args);
+     return rc;
 }
 
 
