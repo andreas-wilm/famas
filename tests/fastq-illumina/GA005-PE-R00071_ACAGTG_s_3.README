@@ -1,0 +1,1 @@
+ ../test-scripts/emirge_pe_filter.py --min-read-len 60 -t fastq-illumina --reads1 GA005-PE-R00071_ACAGTG_s_3_1.fastq.gz --reads2 GA005-PE-R00071_ACAGTG_s_3_2.fastq.gz --out1 GA005-PE-R00071_ACAGTG_s_3_1_3pq3l60.fastq.gz --out2 GA005-PE-R00071_ACAGTG_s_3_2_3pq3l60.fastq.gz

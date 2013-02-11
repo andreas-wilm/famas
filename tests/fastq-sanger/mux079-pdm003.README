@@ -1,0 +1,1 @@
+	 ../../test-scripts/emirge_pe_filter.py --min-read-len 30 -t fastq --reads1 mux079-pdm003_s1.fastq.gz  --reads2 mux079-pdm003_s2.fastq.gz --out1 mux079-pdm003_s1_3pq3l60.fastq.gz --out2 mux079-pdm003_s2_3pq3l60.fastq.gz
