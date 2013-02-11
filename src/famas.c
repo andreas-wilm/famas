@@ -22,11 +22,6 @@
  * 
  */
 
-/* FIXME
- * - add id check as in pairedend_read_order.sh, depending on casava pipeline
- * - add filter flag Y/N 1:0, depending on casava pipeline
- * - add option to trim shortest end to x consecutive Ns
- */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,10 +41,17 @@ KSEQ_INIT(gzFile, gzread)
 #define DEFAULT_MIN5PQUAL 0
 #define DEFAULT_MINREADLEN 60
 #define DEFAULT_PHREDOFFSET 33
+#define PAIRED_ORDER_SAMPLERATE 100
+
 
 /* print macro argument as string */
 #define XSTR(a) STR(a)
 #define STR(a) #a
+
+
+/* check if pointer is NULL and if true return -1 */
+#define NULLCHECK(x) if(NULL==(x)) {fprintf(stderr, "FATAL(%s|%s:%d): memory allocation error\n", __FILE__, __FUNCTION__, __LINE__); return -1;}
+
 
 typedef struct {
      char *infq1;
@@ -60,14 +62,17 @@ typedef struct {
      int min3pqual;
      int phredoffset;
      int minreadlen;
+     int checkorder;
      int force_overwite;
 } args_t;
+
 
 typedef struct {
      /* zero offset pos for trimming */
      int pos5p;
      int pos3p;
 } trim_pos_t;
+
 
 typedef struct {
      int min5pqual;
@@ -78,27 +83,30 @@ typedef struct {
 
 /* Logging macros. You have to use at least one fmt+string. Newline
  * characters will not be appended automatically
+ *
+ * FIXME use quiet instead of verbose? verbose default 1 can't be set
+ * up properly
+ *
  */
 int verbose = 1;
+int debug = 0;
 #ifdef TRACE
-int debug = 1;
 int trace = 1;
 #else
-int debug = 1;
 int trace = 0;
 #endif
 
 /* print only if debug is true*/
-#define LOG_DEBUG(fmt, args...)     {if (debug) {vout(stderr, "DEBUG(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args);}}
+#define LOG_DEBUG(fmt, args...)     {if (debug) {(void)vout(stderr, "DEBUG(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args);}}
 /* print only if verbose is true*/
-#define LOG_INFO(fmt, args...)      {if (verbose) {vout(stderr, fmt, ## args);}}
+#define LOG_INFO(fmt, args...)      {if (verbose) {(void)vout(stderr, fmt, ## args);}}
 /* always warn to stderr */
-#define LOG_WARN(fmt, args...)      vout(stderr, "WARNING(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args)
+#define LOG_WARN(fmt, args...)      (void)vout(stderr, "WARNING(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args)
 /* always print errors to stderr*/
-#define LOG_ERROR(fmt, args...)     vout(stderr, "ERROR(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
+#define LOG_ERROR(fmt, args...)     (void)vout(stderr, "ERROR(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
 /* always print fixme's */
-#define LOG_FIXME(fmt, args...)     vout(stderr, "FIXME(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
-#define LOG_TEST(fmt, args...)      vout(stderr, "TESTING(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
+#define LOG_FIXME(fmt, args...)     (void)vout(stderr, "FIXME(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
+#define LOG_TEST(fmt, args...)      (void)vout(stderr, "TESTING(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
 
 /* Taken from the Linux kernel source and slightly modified.
  */
@@ -113,10 +121,6 @@ vout(FILE *stream, const char *fmt, ...)
      va_end(args);
      return rc;
 }
-
-
-/* check if pointer is NULL and if true return -1 */
-#define NULLCHECK(x) if(NULL==(x)) {fprintf(stderr, "FATAL(%s|%s:%d): memory allocation error\n", __FILE__, __FUNCTION__, __LINE__); return -1;}
 
 
 /* from 
@@ -143,6 +147,7 @@ void dump_args(const args_t *args)
      LOG_DEBUG("  min3pqual       = %d\n", args->min3pqual);
      LOG_DEBUG("  phredoffset     = %d\n", args->phredoffset);
      LOG_DEBUG("  minreadlen      = %d\n", args->minreadlen);
+     LOG_DEBUG("  checkorder      = %d\n", args->checkorder);
      LOG_DEBUG("  force_overwite  = %d\n", args->force_overwite);
 }
 
@@ -206,31 +211,35 @@ int parse_args(args_t *args, int argc, char *argv[])
           "l", "minlen", "<int>",
           "Discard reads if below this length (discard both reads if"
           " either is below this limit). Default: " XSTR(DEFAULT_MINREADLEN));
+     struct arg_lit *opt_checkorder  = arg_lit0(
+          "c", "checkorder", 
+          "Checked paired-end order");
      struct arg_lit *opt_force_overwite  = arg_lit0(
           "f", "force-overwite", 
           "Force overwriting of files");
      struct arg_lit *opt_help = arg_lit0(
           "h", "help",
           "Print this help and exit");
-     struct arg_lit *opt_verbose  = arg_lit0(
-          "v", "verbose", 
-          "Verbose output to stderr");
+     struct arg_lit *opt_quiet  = arg_lit0(
+          NULL, "quiet", 
+          "No output, except errors");
      struct arg_lit *opt_debug  = arg_lit0(
           NULL, "debug", 
           "Print debugging info");
      struct arg_end *opt_end = arg_end(10); /* maximum number of errors
                                              * to store */
      
-     /* set defaults */
+     /* set defaults 
+      */
      opt_minreadlen->ival[0] = DEFAULT_MINREADLEN;
      opt_min5pqual->ival[0] = DEFAULT_MIN5PQUAL;
      opt_min3pqual->ival[0] = DEFAULT_MIN3PQUAL;
      opt_phredoffset->ival[0] = DEFAULT_PHREDOFFSET;
-     
+
      void *argtable[] = {opt_infq1, opt_infq2, opt_outfq1, opt_outfq2,
                          opt_min5pqual, opt_min3pqual, opt_minreadlen, 
-                         opt_phredoffset, opt_force_overwite,
-                         opt_help, opt_verbose, opt_debug,
+                         opt_phredoffset, opt_checkorder, opt_force_overwite,
+                         opt_help, opt_quiet, opt_debug,
                          opt_end};    
      
      if (arg_nullcheck(argtable)) {
@@ -259,10 +268,13 @@ int parse_args(args_t *args, int argc, char *argv[])
      }
      
      args->force_overwite = opt_force_overwite->count;
-     verbose = opt_verbose->count;
+     args->checkorder = opt_checkorder->count;
+     if (opt_quiet->count) {
+          verbose = 0;
+     }
      debug = opt_debug->count;
      if (debug) {
-          verbose=1;
+          verbose = 1;
      }
 
      args->infq1 = strdup(opt_infq1->filename[0]);
@@ -341,7 +353,6 @@ int parse_args(args_t *args, int argc, char *argv[])
           return -1;            
      }
      
-     
      /* Whew! */
 
      arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
@@ -362,63 +373,78 @@ int calc_trim_pos(trim_pos_t *trim_pos,
      trim_pos->pos5p = -1;
      trim_pos->pos3p = -1;
 
-     if (trim_args->minreadlen>1) {
-          minreadlen = trim_args->minreadlen;;
+     /* check for neg minreadlen, otherwise logic below won't work */
+     if (trim_args->minreadlen >= 1) {
+          minreadlen = trim_args->minreadlen;
      } else {
-          /* otherwise logic below doesn't work */
           minreadlen = 1;
      }
 
      if (minreadlen > seq->qual.l) {
-          if (trace) LOG_DEBUG("%s\n", "minreadlen > seq->qual.l");
+          if (trace) {LOG_DEBUG("%s\n", "Input read already smaller than minreadlen");}
           return -1;
      }
 
-     /* 3p end. test first, since more likely to be used by user */
-     for (i=seq->qual.l-1; i >= minreadlen-1; i--) {/* FIXME max minreadlen trim_pos_5p? */
-          int q = seq->qual.s[i]-phredoffset;
-          assert(i>=0);
-          /* only checking here even though we might not see the full
-           * read. if something's wrong we'll surely find out at some
-           * stage */
-          if (q<0 || q>93) {
-               LOG_ERROR("Invalid quality range (%d) in read %s. All results produced so far likely to be dodgy. Exiting...\n", q, seq->name.s);
-               exit(EXIT_FAILURE);
+     /* 3p end. test first, since more likely to be used by user
+      */
+     if (trim_args->min3pqual>0) {
+          for (i=seq->qual.l-1; i >= minreadlen-1; i--) {
+               int q = seq->qual.s[i]-phredoffset;
+               assert(i>=0);
+               
+               /* only checking here even though we might not see the full
+                * read. if something's wrong we'll surely find out at some
+                * stage */
+               if (q<0 || q>93) {
+                    LOG_ERROR("Invalid quality range (%d) in read %s. All results produced so far likely to be dodgy. Exiting...\n", q, seq->name.s);
+                    exit(EXIT_FAILURE);
+               }
+               if (trace) {LOG_DEBUG("Checking at 3p pos %d/%d with q %d >= %d\n",
+                                     i, seq->qual.l, q, trim_args->min3pqual);}
+               if (q >= trim_args->min3pqual) {
+                    trim_pos->pos3p = i;
+                    break;
+               }
           }
-          if (trace) LOG_DEBUG("Checking at 3p pos %d/%d with q %d >= %d\n",
-                               i, seq->qual.l, q, trim_args->min3pqual);
-          if (q >= trim_args->min3pqual) {
-               trim_pos->pos3p = i;
-               break;
+          if (trim_pos->pos3p == -1) {
+               if (trace) {LOG_DEBUG("%s\n", "trim_pos->pos3p == -1");}
+               return -1;
           }
-     }
-     if (trim_pos->pos3p == -1) {
-          if (trace) LOG_DEBUG("%s\n", "trim_pos->pos3p == -1");
-          return -1;
+     } else {
+          trim_pos->pos3p = seq->qual.l-1; /* zero offset */
      }
 
-     /* 5p end */
-     for (i=0; i<seq->qual.l - minreadlen + 1 && i<=trim_pos->pos3p; i++) {
-          int q = seq->qual.s[i] - phredoffset;
-          assert(i<seq->qual.l);
-          if (trace) LOG_DEBUG("Checking at 5p pos %d/%d if q %d >= %d\n", 
-                               i, seq->qual.l, q, trim_args->min5pqual);
-          if (q >= trim_args->min5pqual) {
-               trim_pos->pos5p = i;
-               break;
-          }
-     }
-     if (trim_pos->pos5p == -1) {
-          if (trace) LOG_DEBUG("%s\n", "trim_pos->pos5p == -1");
-          return -1;
-     }
 
-      if (trim_pos->pos3p - trim_pos->pos5p + 1 < minreadlen) {
-           if (trace) LOG_DEBUG("%s\n", "trim_pos->pos3p - trim_pos->pos5p + 1 < minreadlen");
-           return -1;
-      }
+     /* 5p end 
+      */
+     if (trim_args->min5pqual>0) {
+          for (i=0; i<seq->qual.l - minreadlen + 1 && i<=trim_pos->pos3p; i++) {
+               int q = seq->qual.s[i] - phredoffset;
+               assert(i<seq->qual.l);
+               
+               if (trace) {LOG_DEBUG("Checking at 5p pos %d/%d if q %d >= %d\n", 
+                                     i, seq->qual.l, q, trim_args->min5pqual);}
+               if (q >= trim_args->min5pqual) {
+                    trim_pos->pos5p = i;
+                    break;
+               }
+          }
+          if (trim_pos->pos5p == -1) {
+               if (trace) {LOG_DEBUG("%s\n", "trim_pos->pos5p == -1");}
+               return -1;
+          }
+     } else {
+          trim_pos->pos5p = 0;
+     }
       
-      return 0;
+     /* FIXME test should be unnecessary if loops above are done correctly */
+     if (trim_pos->pos3p - trim_pos->pos5p + 1 < minreadlen) {
+          if (trace) {LOG_DEBUG("%s\n", "trim_pos->pos3p - trim_pos->pos5p + 1 < minreadlen");}
+          return -1;
+     }
+          
+     /*LOG_DEBUG("Returning trim_pos->pos3p = %d  trim_pos->pos5p = %d\n", trim_pos->pos3p,  trim_pos->pos5p);*/
+     return 0;
 }
 
 
@@ -482,7 +508,6 @@ int sprintf_fastq(char **buf, kseq_t *ks, trim_pos_t *trim_pos) {
 }
 
 
-
 /* same as sprintf_fastq but gzipped.
  */
 int gzprintf_fastq(gzFile fp, kseq_t *s, trim_pos_t *trim_pos) {
@@ -500,11 +525,85 @@ int gzprintf_fastq(gzFile fp, kseq_t *s, trim_pos_t *trim_pos) {
  }
 
 
+/* returns 0 are not paired, 1 if reads are paired and -1 if order
+ * couldn't be derived.
+ */
+int reads_are_paired(kseq_t *ks1, kseq_t *ks2) {
+     /* Either read names end in '/[12]$' (older illumina/casava) or
+      * they contain ' [12]:[NY]:' at the right end. In the latter
+      * case kseq puts the last bit into ks.comment. Simulated reads
+      * might end in '\.[12]'. Either way, compare only the first bit
+      *
+      * Examples: 
+      *
+      * @HWUSI-EAS100R:6:73:941:1973#0/1
+      * @HWUSI-EAS100R:6:73:941:1973#0/2
+      *
+      * @B2GA005:3:1:3597:949#ACAGTG/1
+      * @B2GA005:3:1:3597:949#ACAGTG/2
+      *
+      * @HWI-ST740:1:C0JMGACXX:1:1101:1452:2203 1:N:0:ATCACG
+      * @HWI-ST740:1:C0JMGACXX:1:1101:1452:2203 2:N:0:ATCACG
+      *
+      */
+     if (ks1->name.l != ks2->name.l) {
+          return -1;
+     }
 
-int test() {
+     /* if we have a comment we, assume kseq put the last bit into
+      * comment. otherwise we assume old illumina/casava with name ~
+      * '/[12]$' */
+     if (ks1->comment.l && ks2->comment.l) {
+          if (0 == strcmp(ks1->name.s, ks2->name.s)) {
+               return 1;
+          } else {
+               return 0;
+          }
+
+     } else {
+          if (ks1->name.l < 3) {
+               return -1;
+          }
+          /* ignore the '/[12]$' bit for comparison */
+          if (0 == strncmp(ks1->name.s, ks2->name.s, ks1->name.l-2)) {
+               return 1;
+          } else {
+               return 0;
+          }
+          
+     }
+
+#if 0     
+     /* if name contained everything */
+     int cmp_len = 0;
+     int i;
+     for (i=ks1->name.l-2; i>=0; i--) {
+          char ks1_c = ks1->name.s[i];
+          char ks2_c = ks2->name.s[i];
+          if (ks1_c==' ' || ks1_c=='/' || ks1_c=='.') {
+               if (ks1_c != ks2_c) {
+                    return -1;
+               }
+               cmp_len = i+1;
+               break;
+          }
+     }
+     if (0 == cmp_len) {
+          return -1;
+     }
+     if (0 == strncmp(ks1->name.s, ks2->name.s, cmp_len)) {
+          return 1;
+     } else {
+          return 0;
+     }
+#endif
+}
+
+
+int test()
+{
      int phredoffset = 33;
      char *buf;
-     int i;
      const int ks_bufsize = 1024;
      trim_pos_t trim_pos;
      kseq_t *ks;
@@ -623,6 +722,78 @@ int test() {
           return EXIT_FAILURE;
      }
 
+
+     strcpy(ks->seq.s,  "ACGT");
+     ks->seq.l = strlen(ks->seq.s);
+     strcpy(ks->qual.s, "5678"); /* Q = 20 21 22 23 */
+     ks->qual.l = strlen(ks->qual.s);
+     orig_read_len = strlen(ks->seq.s);
+     trim_args.min5pqual = 24;
+     trim_args.min3pqual = 0;
+     trim_args.minreadlen = -1;
+     if (-1 != calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+          LOG_ERROR("Read should have been discarded but is not. Got trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
+          return EXIT_FAILURE;
+     }
+     trim_args.min5pqual = 0;
+     trim_args.min3pqual = 24;
+     trim_args.minreadlen = -1;
+     if (-1 != calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+          LOG_ERROR("Read should have been discarded but is not. Got trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
+          return EXIT_FAILURE;
+     }
+     trim_args.min5pqual = 23;
+     trim_args.min3pqual = 23;
+     trim_args.minreadlen = -1;
+     if (-1 == calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+          LOG_ERROR("%s\n", "Read was discarded even though it's okay");
+          return EXIT_FAILURE;
+     }
+     if (trim_pos.pos5p!=3 || trim_pos.pos3p!=3) {
+          LOG_ERROR("Got wrong trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
+          return EXIT_FAILURE;
+     }
+     trim_args.min5pqual = 23;
+     trim_args.min3pqual = 0;
+     trim_args.minreadlen = 1;
+     if (-1 == calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+          LOG_ERROR("%s\n", "Read was discarded even though it's okay");
+          return EXIT_FAILURE;
+     }
+     if (trim_pos.pos5p!=3 || trim_pos.pos3p!=3) {
+          LOG_ERROR("Got wrong trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
+          return EXIT_FAILURE;
+     }
+     trim_args.min5pqual = 0;
+     trim_args.min3pqual = 23;
+     trim_args.minreadlen = 1;
+     if (-1 == calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+          LOG_ERROR("%s\n", "Read was discarded even though it's okay");
+          return EXIT_FAILURE;
+     }
+     if (trim_pos.pos5p!=0 || trim_pos.pos3p!=3) {
+          LOG_ERROR("Got wrong trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
+          return EXIT_FAILURE;
+     }
+
+
+#if 0
+      *
+      * @HWUSI-EAS100R:6:73:941:1973#0/1
+      *
+      * @B2GA005:3:1:3597:949#ACAGTG/1
+      * @B2GA005:3:1:3597:949#ACAGTG/2
+      *
+      * @HWI-ST740:1:C0JMGACXX:1:1101:1452:2203 1:N:0:ATCACG
+      * @HWI-ST740:1:C0JMGACXX:1:1101:1452:2203 2:N:0:ATCACG
+      *
+#endif
+#if 0
+     sprintf_fastq(&buf, ks, &trim_pos);
+     LOG_FIXME("%s\n", buf);
+     free(buf);
+#endif
+
 #if 0 
      sprintf_fastq(&buf, ks, NULL);
      fprintf(stderr, "--- seq before trimming:\n%s", buf);
@@ -659,7 +830,6 @@ int test() {
 }
 
 
-
 int main(int argc, char *argv[])
 {
     args_t args = { 0 };
@@ -671,7 +841,7 @@ int main(int argc, char *argv[])
     unsigned long int n_reads_in = 0, n_reads_out = 0; /* number of reads or pairs */
     trim_args_t trim_args;
     int rc = EXIT_SUCCESS;
-
+    int read_order_warning_issued = 0;
 
 #ifdef TEST
     return test();
@@ -721,6 +891,7 @@ int main(int argc, char *argv[])
 	while ((len1 = kseq_read(seq1)) >= 0) {
          trim_pos_t trim_pos_1;
          trim_pos_t trim_pos_2;
+         n_reads_in+=1;
 
          if (paired) {
               if ((len2 = kseq_read(seq2)) < 0) {
@@ -730,9 +901,28 @@ int main(int argc, char *argv[])
                    rc = EXIT_FAILURE;
                    goto free_and_exit;
               }
-         }
-         n_reads_in+=1;
 
+              if (args.checkorder && ! read_order_warning_issued
+                  && 1==(n_reads_in%PAIRED_ORDER_SAMPLERATE)) {
+                   rc = reads_are_paired(seq1, seq2);
+                   if (1 != rc) {
+                        if (0 == rc) {
+                             LOG_ERROR("Read order check failed."
+                                       " Checked reads names were %s and %s."
+                                       " Don't trust already produced results. Exiting...\n",
+                                       seq1->name.s, seq2->name.s);
+                             rc = EXIT_FAILURE;
+                             goto free_and_exit;
+           
+                        } else if (-1 == rc) {
+                             LOG_WARN("Couldn't derive read order from reads"
+                                      " %s and %s. Continuing anyway...\n",
+                                      seq1->name.s, seq2->name.s);
+                             read_order_warning_issued = 1;
+                        }
+                   }
+              }
+         }
 
          /* get trim positions and continue if either read should be
           * discarded 
@@ -778,6 +968,8 @@ int main(int argc, char *argv[])
               }
     }
 
+    rc = EXIT_SUCCESS;
+
 free_and_exit:
 
     LOG_INFO("%d %s in. %d %s out\n", n_reads_in, paired?"pairs":"reads", 
@@ -795,3 +987,4 @@ free_and_exit:
 
 	return rc;
 }
+
