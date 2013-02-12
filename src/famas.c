@@ -35,14 +35,29 @@
 #include "kseq.h"
 KSEQ_INIT(gzFile, gzread)
 
-
-#define MYNAME "famas"
+/* defaults:
+ * most can be overwritten during compile time, e.g.
+ *-DPAIRED_ORDER_SAMPLERATE=2
+ */
+#ifndef DEFAULT_MIN3PQUAL
 #define DEFAULT_MIN3PQUAL 3
+#endif
+#ifndef DEFAULT_MIN5PQUAL
 #define DEFAULT_MIN5PQUAL 0
+#endif
+#ifndef DEFAULT_MINREADLEN
 #define DEFAULT_MINREADLEN 60
+#endif
+#ifndef DEFAULT_PHREDOFFSET
 #define DEFAULT_PHREDOFFSET 33
-#define PAIRED_ORDER_SAMPLERATE 100
-
+#endif
+#ifndef PAIRED_ORDER_SAMPLERATE
+#define PAIRED_ORDER_SAMPLERATE 1000
+#endif
+#ifndef QUAL_CHECK_SAMPLERATE
+#define QUAL_CHECK_SAMPLERATE 1000
+#endif
+#define EARLY_EXIT_MESSAGE "Don't trust already produced results. Exiting..."
 
 /* print macro argument as string */
 #define XSTR(a) STR(a)
@@ -51,7 +66,6 @@ KSEQ_INIT(gzFile, gzread)
 
 /* check if pointer is NULL and if true return -1 */
 #define NULLCHECK(x) if(NULL==(x)) {fprintf(stderr, "FATAL(%s|%s:%d): memory allocation error\n", __FILE__, __FUNCTION__, __LINE__); return -1;}
-
 
 typedef struct {
      char *infq1;
@@ -62,7 +76,8 @@ typedef struct {
      int min3pqual;
      int phredoffset;
      int minreadlen;
-     int checkorder;
+     int no_order_check;
+     int no_qual_check;
      int force_overwite;
 } args_t;
 
@@ -83,10 +98,6 @@ typedef struct {
 
 /* Logging macros. You have to use at least one fmt+string. Newline
  * characters will not be appended automatically
- *
- * FIXME use quiet instead of verbose? verbose default 1 can't be set
- * up properly
- *
  */
 int verbose = 1;
 int debug = 0;
@@ -139,25 +150,30 @@ int file_exists(const char *fname)
 void dump_args(const args_t *args) 
 {
      LOG_DEBUG("%s\n", "args:");
-     LOG_DEBUG("  infq1           = %s\n", args->infq1);
-     LOG_DEBUG("  infq2           = %s\n", args->infq2);
-     LOG_DEBUG("  outfq1          = %s\n", args->outfq1);
-     LOG_DEBUG("  outfq2          = %s\n", args->outfq2);
-     LOG_DEBUG("  min5pqual       = %d\n", args->min5pqual);
-     LOG_DEBUG("  min3pqual       = %d\n", args->min3pqual);
-     LOG_DEBUG("  phredoffset     = %d\n", args->phredoffset);
-     LOG_DEBUG("  minreadlen      = %d\n", args->minreadlen);
-     LOG_DEBUG("  checkorder      = %d\n", args->checkorder);
-     LOG_DEBUG("  force_overwite  = %d\n", args->force_overwite);
+     LOG_DEBUG("  infq1              = %s\n", args->infq1);
+     LOG_DEBUG("  infq2              = %s\n", args->infq2);
+     LOG_DEBUG("  outfq1             = %s\n", args->outfq1);
+     LOG_DEBUG("  outfq2             = %s\n", args->outfq2);
+     LOG_DEBUG("  min5pqual          = %d\n", args->min5pqual);
+     LOG_DEBUG("  min3pqual          = %d\n", args->min3pqual);
+     LOG_DEBUG("  phredoffset        = %d\n", args->phredoffset);
+     LOG_DEBUG("  minreadlen         = %d\n", args->minreadlen);
+     LOG_DEBUG("  no_order_check     = %d\n", args->no_order_check);
+     LOG_DEBUG("  no_qual_check      = %d\n", args->no_qual_check);
+     LOG_DEBUG("  force_overwite     = %d\n", args->force_overwite);
 }
 
 
 void free_args(args_t *args)
 {
      free(args->infq1);
+     args->infq1 = NULL;
      free(args->infq2);
+     args->infq2 = NULL;
      free(args->outfq1);
+     args->outfq1 = NULL;
      free(args->outfq2);
+     args->outfq2 = NULL;
 }
 
 
@@ -196,11 +212,11 @@ int parse_args(args_t *args, int argc, char *argv[])
           "Other output FastQ file if paired-end input (will be gzipped)");
      struct arg_int *opt_min5pqual = arg_int0(
           "Q", "min5pqual", "<int>",
-          "Trim from start/5'-end if base-call quality below this value."
+          "Trim from start/5'-end if base-call quality is below this value."
           " Default: " XSTR(DEFAULT_MIN5PQUAL));
      struct arg_int *opt_min3pqual = arg_int0(
           "q", "min3pqual", "<int>",
-          "Trim from end/3'-end if base-call quality below this value (Illumina guidelines recommend 3)."
+          "Trim from end/3'-end if base-call quality is below this value (Illumina guidelines recommend 3)."
           " Default: " XSTR(DEFAULT_MIN3PQUAL));
      struct arg_int *opt_phredoffset = arg_int0(
           "e", "phred", "<33|64>",
@@ -209,13 +225,16 @@ int parse_args(args_t *args, int argc, char *argv[])
           " Default: " XSTR(DEFAULT_PHREDOFFSET));
      struct arg_int *opt_minreadlen = arg_int0(
           "l", "minlen", "<int>",
-          "Discard reads if below this length (discard both reads if"
+          "Discard reads if read length is below this length (discard both reads if"
           " either is below this limit). Default: " XSTR(DEFAULT_MINREADLEN));
-     struct arg_lit *opt_checkorder  = arg_lit0(
-          "c", "checkorder", 
-          "Checked paired-end order");
+     struct arg_lit *opt_no_order_check  = arg_lit0(
+          NULL, "no-order-check", 
+          "Don't check paired-end read order (otherwise checked every " XSTR(PAIRED_ORDER_SAMPLERATE) " reads)");
+     struct arg_lit *opt_no_qual_check  = arg_lit0(
+          NULL, "no-qual-check", 
+          "Don't check quality range (otherwise checked every " XSTR(QUAL_CHECK_SAMPLERATE) " reads)");
      struct arg_lit *opt_force_overwite  = arg_lit0(
-          "f", "force-overwite", 
+          "f", "force-overwrite", 
           "Force overwriting of files");
      struct arg_lit *opt_help = arg_lit0(
           "h", "help",
@@ -237,8 +256,10 @@ int parse_args(args_t *args, int argc, char *argv[])
      opt_phredoffset->ival[0] = DEFAULT_PHREDOFFSET;
 
      void *argtable[] = {opt_infq1, opt_infq2, opt_outfq1, opt_outfq2,
-                         opt_min5pqual, opt_min3pqual, opt_minreadlen, 
-                         opt_phredoffset, opt_checkorder, opt_force_overwite,
+                         opt_min5pqual, opt_min3pqual, 
+                         opt_minreadlen, opt_phredoffset, 
+                         opt_no_order_check, opt_no_qual_check, 
+                         opt_force_overwite,
                          opt_help, opt_quiet, opt_debug,
                          opt_end};    
      
@@ -252,23 +273,25 @@ int parse_args(args_t *args, int argc, char *argv[])
      /* Special case: '--help' takes precedence over error reporting
       * and we are allowed to exit from here */
      if (opt_help->count > 0) {
-          fprintf(stderr, "Usage: %s\n", MYNAME);
+          fprintf(stderr, "%s (%s) - yet another program for FAstq MASsaging\n\n",
+                  PACKAGE_NAME, PACKAGE_VERSION);
+          fprintf(stderr, "Usage: %s", PACKAGE_NAME);
           arg_print_syntax(stdout, argtable, "\n");
-          fprintf(stderr, "\nThis is yet another program for FastQ filtering\n");
           arg_print_glossary(stdout, argtable, "  %-25s %s\n");
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
           exit(0);
      }
      
      if (nerrors > 0) {
-          arg_print_errors(stdout, opt_end, MYNAME);
-          fprintf(stderr, "For more help try: %s -h or --help\n", MYNAME);
+          arg_print_errors(stdout, opt_end, PACKAGE_NAME);
+          fprintf(stderr, "For more help try: %s -h or --help\n", PACKAGE_NAME);
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
           return -1;
      }
      
      args->force_overwite = opt_force_overwite->count;
-     args->checkorder = opt_checkorder->count;
+     args->no_order_check = opt_no_order_check->count;
+     args->no_qual_check = opt_no_qual_check->count;
      if (opt_quiet->count) {
           verbose = 0;
      }
@@ -369,6 +392,7 @@ int calc_trim_pos(trim_pos_t *trim_pos,
 {
      int i;
      int minreadlen;
+     int trace = 0; /* local trace, overwriting global */
 
      trim_pos->pos5p = -1;
      trim_pos->pos3p = -1;
@@ -391,14 +415,6 @@ int calc_trim_pos(trim_pos_t *trim_pos,
           for (i=seq->qual.l-1; i >= minreadlen-1; i--) {
                int q = seq->qual.s[i]-phredoffset;
                assert(i>=0);
-               
-               /* only checking here even though we might not see the full
-                * read. if something's wrong we'll surely find out at some
-                * stage */
-               if (q<0 || q>93) {
-                    LOG_ERROR("Invalid quality range (%d) in read %s. All results produced so far likely to be dodgy. Exiting...\n", q, seq->name.s);
-                    exit(EXIT_FAILURE);
-               }
                if (trace) {LOG_DEBUG("Checking at 3p pos %d/%d with q %d >= %d\n",
                                      i, seq->qual.l, q, trim_args->min3pqual);}
                if (q >= trim_args->min3pqual) {
@@ -437,7 +453,8 @@ int calc_trim_pos(trim_pos_t *trim_pos,
           trim_pos->pos5p = 0;
      }
       
-     /* FIXME test should be unnecessary if loops above are done correctly */
+     /* test should be unnecessary if loops above are done
+      * correctly */
      if (trim_pos->pos3p - trim_pos->pos5p + 1 < minreadlen) {
           if (trace) {LOG_DEBUG("%s\n", "trim_pos->pos3p - trim_pos->pos5p + 1 < minreadlen");}
           return -1;
@@ -452,22 +469,22 @@ int calc_trim_pos(trim_pos_t *trim_pos,
  * number on error. caller has to free buf, which will be allocated
  * here. if trim_pos is not NULL seq will be trimmed accordingly
  */
-int sprintf_fastq(char **buf, kseq_t *ks, trim_pos_t *trim_pos) {
+int sprintf_fastq(char **buf, const kseq_t *seq, const trim_pos_t *trim_pos) {
      int ret = 0;
      /* remember values temporarily overwritten during trimming */
      char zeroed_base = -1;
      char zeroed_qual = -1;
-     int bufsize = 1/*@*/ + ks->name.l + 1/*space*/ + ks->comment.l
+     int bufsize = 1/*@*/ + seq->name.l + 1/*space*/ + seq->comment.l
           + 1 /* newline */
-          + ks->seq.l 
+          + seq->seq.l 
           + 3 /* newline, '+' and newline */ 
-          + ks->qual.l 
+          + seq->qual.l 
           + 1 /* newline */
           + 1;  /* trailing 0 */
      int start = 0;
 
      /* fastq is supposed to have a quality string */
-     if (! ks->qual.l){
+     if (! seq->qual.l){
           return -1;
      }
 
@@ -481,28 +498,28 @@ int sprintf_fastq(char **buf, kseq_t *ks, trim_pos_t *trim_pos) {
 
           start = trim_pos->pos5p;
           /* temporarily overwrite the end */
-          zeroed_base = ks->seq.s[trim_pos->pos3p+1];
-          zeroed_qual = ks->qual.s[trim_pos->pos3p+1];
-          ks->seq.s[trim_pos->pos3p+1] = '\0';
-          ks->qual.s[trim_pos->pos3p+1] = '\0';
+          zeroed_base = seq->seq.s[trim_pos->pos3p+1];
+          zeroed_qual = seq->qual.s[trim_pos->pos3p+1];
+          seq->seq.s[trim_pos->pos3p+1] = '\0';
+          seq->qual.s[trim_pos->pos3p+1] = '\0';
      }
      
      (*buf) = calloc(bufsize, sizeof(char));
      NULLCHECK(buf);
      
      /* or simply use asprintf, which is GNU extension available also on BSD */
-     if (ks->comment.l) {
+     if (seq->comment.l) {
           ret = sprintf((*buf), "@%s %s\n%s\n+\n%s\n", 
-                        ks->name.s, ks->comment.s, & ks->seq.s[start], & ks->qual.s[start]);
+                        seq->name.s, seq->comment.s, & seq->seq.s[start], & seq->qual.s[start]);
      } else {
           ret = sprintf((*buf), "@%s\n%s\n+\n%s\n", 
-                        ks->name.s, & ks->seq.s[start], & ks->qual.s[start]);
+                        seq->name.s, & seq->seq.s[start], & seq->qual.s[start]);
      }
 
      if (NULL != trim_pos) {
           /* revert temporary trimming changes */
-          ks->seq.s[trim_pos->pos3p+1] = zeroed_base;
-          ks->qual.s[trim_pos->pos3p+1] = zeroed_qual;
+          seq->seq.s[trim_pos->pos3p+1] = zeroed_base;
+          seq->qual.s[trim_pos->pos3p+1] = zeroed_qual;
      }
      return ret;
 }
@@ -510,11 +527,11 @@ int sprintf_fastq(char **buf, kseq_t *ks, trim_pos_t *trim_pos) {
 
 /* same as sprintf_fastq but gzipped.
  */
-int gzprintf_fastq(gzFile fp, kseq_t *s, trim_pos_t *trim_pos) {
+int gzprintf_fastq(gzFile fp, const kseq_t *seq, const trim_pos_t *trim_pos) {
      char *buf;
      int ret;
 
-     ret = sprintf_fastq(&buf, s, trim_pos);
+     ret = sprintf_fastq(&buf, seq, trim_pos);
      if (ret<0) {
           return ret;
      }
@@ -528,10 +545,10 @@ int gzprintf_fastq(gzFile fp, kseq_t *s, trim_pos_t *trim_pos) {
 /* returns 0 are not paired, 1 if reads are paired and -1 if order
  * couldn't be derived.
  */
-int reads_are_paired(kseq_t *ks1, kseq_t *ks2) {
+int reads_are_paired(const kseq_t *seq1, const kseq_t *seq2) {
      /* Either read names end in '/[12]$' (older illumina/casava) or
       * they contain ' [12]:[NY]:' at the right end. In the latter
-      * case kseq puts the last bit into ks.comment. Simulated reads
+      * case seq puts the last bit into seq.comment. Simulated reads
       * might end in '\.[12]'. Either way, compare only the first bit
       *
       * Examples: 
@@ -546,26 +563,25 @@ int reads_are_paired(kseq_t *ks1, kseq_t *ks2) {
       * @HWI-ST740:1:C0JMGACXX:1:1101:1452:2203 2:N:0:ATCACG
       *
       */
-     if (ks1->name.l != ks2->name.l) {
+     if (seq1->name.l != seq2->name.l) {
           return -1;
      }
-
-     /* if we have a comment we, assume kseq put the last bit into
+     /* if we have a comment we, assume seq put the last bit into
       * comment. otherwise we assume old illumina/casava with name ~
       * '/[12]$' */
-     if (ks1->comment.l && ks2->comment.l) {
-          if (0 == strcmp(ks1->name.s, ks2->name.s)) {
+     if (seq1->comment.l && seq2->comment.l) {
+          if (0 == strcmp(seq1->name.s, seq2->name.s)) {
                return 1;
           } else {
                return 0;
           }
 
      } else {
-          if (ks1->name.l < 3) {
+          if (seq1->name.l < 3) {
                return -1;
           }
           /* ignore the '/[12]$' bit for comparison */
-          if (0 == strncmp(ks1->name.s, ks2->name.s, ks1->name.l-2)) {
+          if (0 == strncmp(seq1->name.s, seq2->name.s, seq1->name.l-2)) {
                return 1;
           } else {
                return 0;
@@ -577,11 +593,11 @@ int reads_are_paired(kseq_t *ks1, kseq_t *ks2) {
      /* if name contained everything */
      int cmp_len = 0;
      int i;
-     for (i=ks1->name.l-2; i>=0; i--) {
-          char ks1_c = ks1->name.s[i];
-          char ks2_c = ks2->name.s[i];
-          if (ks1_c==' ' || ks1_c=='/' || ks1_c=='.') {
-               if (ks1_c != ks2_c) {
+     for (i=seq1->name.l-2; i>=0; i--) {
+          char seq1_c = seq1->name.s[i];
+          char seq2_c = seq2->name.s[i];
+          if (seq1_c==' ' || seq1_c=='/' || seq1_c=='.') {
+               if (seq1_c != seq2_c) {
                     return -1;
                }
                cmp_len = i+1;
@@ -591,7 +607,7 @@ int reads_are_paired(kseq_t *ks1, kseq_t *ks2) {
      if (0 == cmp_len) {
           return -1;
      }
-     if (0 == strncmp(ks1->name.s, ks2->name.s, cmp_len)) {
+     if (0 == strncmp(seq1->name.s, seq2->name.s, cmp_len)) {
           return 1;
      } else {
           return 0;
@@ -613,7 +629,7 @@ int test()
      ks = (kseq_t*)calloc(1, sizeof(kseq_t));
      NULLCHECK(ks);
 
-     LOG_TEST("%s\n", "Starting tests");
+     LOG_TEST("%s\n", "Starting interal tests");
 
      /* setup dummy kseq with enough space for some experiments.
       * WARNING: not sure if I used kseq_t correctly here
@@ -830,6 +846,25 @@ int test()
 }
 
 
+/* returns 1 if valid and 0 if invalid. using lenient definition.
+ */
+int qual_range_is_valid(const kseq_t *seq, const int phredoffset)
+{
+     int i;
+     for (i=0; i<seq->qual.l; i++) {
+          int q = seq->qual.s[i]-phredoffset;
+          if (q<0 || q>93) {
+               return 0;
+          }
+     }
+     /* no qualities at all? */
+     if (0 == i) {
+          return 0;
+     }
+     return 1;
+}
+
+
 int main(int argc, char *argv[])
 {
     args_t args = { 0 };
@@ -837,10 +872,10 @@ int main(int argc, char *argv[])
     gzFile fp_outfq1 = NULL, fp_outfq2 = NULL;
     kseq_t *seq1 = NULL, *seq2 = NULL;
     int len1 = -1, len2 = -1;
-    int paired = 0; /* bool paired end mode */
+    int pe_mode = 0; /* bool paired end mode */
     unsigned long int n_reads_in = 0, n_reads_out = 0; /* number of reads or pairs */
     trim_args_t trim_args;
-    int rc = EXIT_SUCCESS;
+    int rc;
     int read_order_warning_issued = 0;
 
 #ifdef TEST
@@ -858,9 +893,8 @@ int main(int argc, char *argv[])
     trim_args.min3pqual = args.min3pqual;;
     trim_args.minreadlen = args.minreadlen;
 
-
     if (args.infq2) {
-         paired = 1;
+         pe_mode = 1;
     }
 
     fp_infq1 = (0 == strcmp(args.infq1, "-")) ? 
@@ -873,7 +907,7 @@ int main(int argc, char *argv[])
          return EXIT_FAILURE;
     }
 
-	if (paired) {
+	if (pe_mode) {
          fp_infq2 = gzopen(args.infq2, "r");
          fp_outfq2 = gzopen(args.outfq2, "w");
          if (NULL == fp_infq2 || NULL == fp_outfq2) {
@@ -884,33 +918,73 @@ int main(int argc, char *argv[])
     }
   
 	seq1 = kseq_init(fp_infq1);
-	if (paired) {
+	if (pe_mode) {
          seq2 = kseq_init(fp_infq2);
     }
     n_reads_in = n_reads_out = 0;
 	while ((len1 = kseq_read(seq1)) >= 0) {
          trim_pos_t trim_pos_1;
          trim_pos_t trim_pos_2;
+
          n_reads_in+=1;
 
-         if (paired) {
+         if (trace) {LOG_DEBUG("Inspecting seq1: %s\n", seq1->name.s);}
+
+         if (pe_mode) {
+              /* read read2 directly to keep both in sync. a continue
+               * before reading read2 makes order invalid */
               if ((len2 = kseq_read(seq2)) < 0) {
-                   LOG_ERROR("%s\n", "Reached premature end in second file."
-                             " Still received reads from first file."
-                             " Don't trust already produced results. Exiting...");
+                   LOG_ERROR("Reached premature end in second file (%s)."
+                             " Still received reads from first file (%s from %s). %s\n",
+                             args.infq2, seq1->name.s, args.infq1, EARLY_EXIT_MESSAGE);
                    rc = EXIT_FAILURE;
                    goto free_and_exit;
               }
+              if (trace) {LOG_DEBUG("Inspecting seq2: %s\n", seq2->name.s);}
+         }
 
-              if (args.checkorder && ! read_order_warning_issued
-                  && 1==(n_reads_in%PAIRED_ORDER_SAMPLERATE)) {
+         /* quality check before trimming to get higher coverage */
+         if (! args.no_qual_check && 1 == (n_reads_in%QUAL_CHECK_SAMPLERATE)) {
+              if (! qual_range_is_valid(seq1, args.phredoffset)) {
+                   LOG_ERROR("Read %s has qualities outside valid range (%s). %s\n",
+                             seq1->name.s, seq1->qual.s, EARLY_EXIT_MESSAGE);
+                   rc = EXIT_FAILURE;
+                   goto free_and_exit;
+              }
+         }
+
+         if (-1 == calc_trim_pos(&trim_pos_1, seq1, 
+                                 args.phredoffset, &trim_args)) {
+              if (trace) {LOG_DEBUG("%s\n", "seq1 to be discarded");}
+              continue;
+         }
+
+
+         if (pe_mode) {
+              /* quality check before trimming to get higher coverage */
+              if (! args.no_qual_check && 1 == (n_reads_in%QUAL_CHECK_SAMPLERATE)) {
+                   if (! qual_range_is_valid(seq1, args.phredoffset)) {
+                        LOG_ERROR("Read %s has qualities outside valid range (%s). %s\n",
+                                  seq1->name.s, seq1->qual.s, EARLY_EXIT_MESSAGE);
+                        rc = EXIT_FAILURE;
+                        goto free_and_exit;
+                   }
+              }
+
+              if (-1 == calc_trim_pos(&trim_pos_2, seq2, 
+                                      args.phredoffset, &trim_args)) {
+                   if (trace) {LOG_DEBUG("%s\n", "seq2 to be discarded");}
+                   continue;
+              }
+
+              if (! args.no_order_check && ! read_order_warning_issued
+                  && (1 == (n_reads_in%PAIRED_ORDER_SAMPLERATE))) {
                    rc = reads_are_paired(seq1, seq2);
                    if (1 != rc) {
                         if (0 == rc) {
                              LOG_ERROR("Read order check failed."
-                                       " Checked reads names were %s and %s."
-                                       " Don't trust already produced results. Exiting...\n",
-                                       seq1->name.s, seq2->name.s);
+                                       " Checked reads names were %s and %s. %s\n",
+                                       seq1->name.s, seq2->name.s, EARLY_EXIT_MESSAGE);
                              rc = EXIT_FAILURE;
                              goto free_and_exit;
            
@@ -921,25 +995,12 @@ int main(int argc, char *argv[])
                              read_order_warning_issued = 1;
                         }
                    }
+                   LOG_DEBUG("read order okay for %s and %s\n", 
+                             seq1->name.s, seq2->name.s);
+
               }
          }
 
-         /* get trim positions and continue if either read should be
-          * discarded 
-          */
-         if (-1 == calc_trim_pos(&trim_pos_1, seq1, 
-                                 args.phredoffset, &trim_args)) {
-              continue;
-         }
-         if (paired) {
-              if (-1 == calc_trim_pos(&trim_pos_2, seq2, 
-                                      args.phredoffset, &trim_args)) {
-                   continue;
-              }
-         }
-
-         /* write trimmed reads
-          */
          if (0 >= gzprintf_fastq(fp_outfq1, seq1, &trim_pos_1)) {
               LOG_ERROR("Couldn't write to %s (after successfully writing"
                         "  %d reads). Exiting...\n",
@@ -947,22 +1008,26 @@ int main(int argc, char *argv[])
               rc = EXIT_FAILURE;
               goto free_and_exit;
          }
-         if (paired) {
+
+         if (pe_mode) {
               if (0 >= gzprintf_fastq(fp_outfq2, seq2, &trim_pos_2)) {
                    LOG_ERROR("Couldn't write to %s (after successfully"
-                             " writing %d reads). Exiting...\n",
-                             args.outfq2, n_reads_out);
+                             " writing %d reads). %s\n",
+                             args.outfq2, n_reads_out,
+                             EARLY_EXIT_MESSAGE);
                    rc = EXIT_FAILURE;
                    goto free_and_exit;
               }
          }
+
          n_reads_out+=1;
 	}
-	if (paired) {
+
+	if (pe_mode) {
          if ((len2 = kseq_read(seq2)) >= 0) {
-              LOG_ERROR("%s\n", "Reached premature end in first file."
-                             " Still received reads from second file."
-                             " Don't trust already produced results. Exiting...");
+              LOG_ERROR("Reached premature end in first file (%s)."
+                        " Still received reads from second file (%s from %s). %s\n",
+                        args.infq1, seq2->name.s, args.infq2, EARLY_EXIT_MESSAGE);
                    rc = EXIT_FAILURE;
                    goto free_and_exit;
               }
@@ -972,13 +1037,13 @@ int main(int argc, char *argv[])
 
 free_and_exit:
 
-    LOG_INFO("%d %s in. %d %s out\n", n_reads_in, paired?"pairs":"reads", 
-             n_reads_out, paired?"pairs":"reads");
+    LOG_INFO("%d %s in. %d %s out\n", n_reads_in, pe_mode?"pairs":"reads", 
+             n_reads_out, pe_mode?"pairs":"reads");
 
 	kseq_destroy(seq1);
 	gzclose(fp_infq1);
 	gzclose(fp_outfq1);
-    if (paired) {
+    if (pe_mode) {
          kseq_destroy(seq2);
          gzclose(fp_infq2);
          gzclose(fp_outfq2);
