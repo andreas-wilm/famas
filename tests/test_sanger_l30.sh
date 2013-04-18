@@ -1,4 +1,4 @@
-source lib.sh | exit
+source lib.sh || exit 1
 
 i=./fastq-sanger/mux079-pdm003_s1.fastq.gz
 j=./fastq-sanger/mux079-pdm003_s2.fastq.gz
@@ -6,6 +6,7 @@ j=./fastq-sanger/mux079-pdm003_s2.fastq.gz
 o=$(mktemp -t $(basename $0).XXXXXX)
 p=$(mktemp -t $(basename $0).XXXXXX)
 
+#echodebug "famas=$famas"
 #cat <<EOF
 $famas --quiet -f -Q 0 -q 3 -l 30 -i $i -j $j -o $o -p $p || exit 1
 #EOF
