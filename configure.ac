@@ -1,4 +1,4 @@
-AC_INIT([famas], [0.0.3], [andreas.wilm@gmail.com])
+AC_INIT([famas], [0.0.4], [andreas.wilm@gmail.com])
 
 # The AC_INIT macro can take any source file as an argument. It just
 # checks that the file is there, which should, in turn, mean that the
@@ -18,6 +18,10 @@ AC_PREREQ(2.6) # 2.60 needed for AC_USE_SYSTEM_EXTENSIONS
 # Obsolete: It takes the program name and version number as arguments.
 AM_INIT_AUTOMAKE
 
+AC_REVISION([m4_esyscmd_s([git describe --always --dirty])])
+
+AC_LANG([C])
+
 # This macro was introduced in Autoconf 2.60. If possible, enable
 # extensions to C or Posix on hosts that normally disable the
 # extensions.
@@ -31,6 +35,8 @@ AC_PROG_MAKE_SET
 # just type 'make install' to install the software.
 AC_PROG_INSTALL
 AC_PROG_CC
+/* make c99 default */
+AC_PROG_CC_STDC
 AC_PROG_INSTALL
 AC_PROG_LN_S
 #AC_PROG_RANLIB
@@ -42,6 +48,21 @@ AC_C_INLINE
 # check for standard headers
 AC_HEADER_STDC
 
+
+# debugging from http://www.bioinf.uni-freiburg.de/~mmann/HowTo/automake.html
+AC_MSG_CHECKING([whether to build with debug information])
+AM_CFLAGS="$AM_CFLAGS -Wall -O3"
+AC_ARG_ENABLE([debug],
+    [AS_HELP_STRING([--enable-debug],
+        [enable debug data generation (def=no)])],
+    [debugit="$enableval"],
+    [debugit=no])
+AC_MSG_RESULT([$debugit])
+if test x"$debugit" = x"yes"; then
+    AC_DEFINE([DEBUG],[],[Debug Mode])
+    AM_CFLAGS="$AM_CFLAGS -g -Wall -Werror -Wno-uninitialized -O0"
+fi
+AC_SUBST([AM_CFLAGS])
 
 
 # library checks
