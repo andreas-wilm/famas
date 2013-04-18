@@ -531,21 +531,21 @@ int sprintf_fastq(char **buf, const kseq_t *seq, const trim_pos_t *trim_pos) {
 
      /* fastq is supposed to have a quality string */
      if (! seq->qual.l){
-          LOG_DEBUG("%s\n", "FastQ is missing a quality string")
+          LOG_ERROR("%s\n", "FastQ is missing a quality string");
           return -1;
      }
 
      if (NULL != trim_pos && (trim_pos->pos5p >= 0 && trim_pos->pos3p >= 0)) {
           if (trim_pos->pos5p < 0 || trim_pos->pos3p < 0) {
-               LOG_FATAL("%s\n", "Internal error: Invalid trim pos (5p or 3p < 0)");
+               LOG_ERROR("%s\n", "Internal error: Invalid trim pos (5p or 3p < 0)");
                return -1;
           }
           if (trim_pos->pos3p - trim_pos->pos5p + 1 < 0) {
-               LOG_FATAL("%s\n", "Internal error: Invalid trim pos (negative distance between 5p and 3p)");
+               LOG_ERROR("%s\n", "Internal error: Invalid trim pos (negative distance between 5p and 3p)");
                return -1;               
           }
           if (trim_pos->pos3p >= seq->qual.l) {
-               LOG_FATAL("Internal error: Invalid 3p trim pos (%d > string length which is %d)\n",
+               LOG_ERROR("Internal error: Invalid 3p trim pos (%d > string length which is %d)\n",
                          trim_pos->pos3p, seq->qual.l);
                return -1;               
           }
@@ -1079,12 +1079,6 @@ int main(int argc, char *argv[])
                    continue;
               }
          }
-
-         LOG_DEBUG("Made it to writing stage with trim_pos_1=%p trim_pos_2=%p\n", trim_pos_1, trim_pos_2);
-         LOG_DEBUG("%s\n", "trim pos 1");
-         dump_trim_pos(trim_pos_1);
-         LOG_DEBUG("%s\n", "trim pos 2");
-         dump_trim_pos(trim_pos_2);
 
          if (0 >= gzprintf_fastq(fp_outfq1, seq1, trim_pos_1)) {
               LOG_ERROR("Couldn't write to %s (after successfully writing"
