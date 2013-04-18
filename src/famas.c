@@ -27,10 +27,11 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <assert.h>
+#include <unistd.h>
+#include <time.h>
 
 #include <argtable2.h>
 #include <zlib.h>
-#include <unistd.h>
 
 #include "kseq.h"
 KSEQ_INIT(gzFile, gzread)
@@ -72,10 +73,15 @@ typedef struct {
      char *infq2;
      char *outfq1;
      char *outfq2;
+
+     int no_filter;
      int min5pqual;
      int min3pqual;
      int phredoffset;
      int minreadlen;
+
+     int sampling;
+
      int no_order_check;
      int no_qual_check;
      int force_overwite;
@@ -115,6 +121,7 @@ int trace = 0;
 #define LOG_WARN(fmt, args...)      (void)vout(stderr, "WARNING(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args)
 /* always print errors to stderr*/
 #define LOG_ERROR(fmt, args...)     (void)vout(stderr, "ERROR(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
+#define LOG_FATAL(fmt, args...)     (void)vout(stderr, "FATAL(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
 /* always print fixme's */
 #define LOG_FIXME(fmt, args...)     (void)vout(stderr, "FIXME(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
 #define LOG_TEST(fmt, args...)      (void)vout(stderr, "TESTING(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
@@ -154,10 +161,15 @@ void dump_args(const args_t *args)
      LOG_DEBUG("  infq2              = %s\n", args->infq2);
      LOG_DEBUG("  outfq1             = %s\n", args->outfq1);
      LOG_DEBUG("  outfq2             = %s\n", args->outfq2);
+
+     LOG_DEBUG("  no_filter          = %d\n", args->no_filter);
      LOG_DEBUG("  min5pqual          = %d\n", args->min5pqual);
      LOG_DEBUG("  min3pqual          = %d\n", args->min3pqual);
      LOG_DEBUG("  phredoffset        = %d\n", args->phredoffset);
      LOG_DEBUG("  minreadlen         = %d\n", args->minreadlen);
+
+     LOG_DEBUG("  sampling           = %d\n", args->sampling);
+
      LOG_DEBUG("  no_order_check     = %d\n", args->no_order_check);
      LOG_DEBUG("  no_qual_check      = %d\n", args->no_qual_check);
      LOG_DEBUG("  force_overwite     = %d\n", args->force_overwite);
@@ -198,6 +210,7 @@ int parse_args(args_t *args, int argc, char *argv[])
       * the glossary with default values. A stringification macro
       * helps though.
       */  
+     struct arg_rem  *rem_files  = arg_rem(NULL, "\nFiles:");
      struct arg_file *opt_infq1 = arg_file1(
           "i", "in1", "<file>",
           "Input FastQ file (gzip supported; '-' for stdin)");
@@ -210,6 +223,11 @@ int parse_args(args_t *args, int argc, char *argv[])
      struct arg_file *opt_outfq2 = arg_file0(
           "p", "out2", "<file>",
           "Other output FastQ file if paired-end input (will be gzipped)");
+
+     struct arg_rem  *rem_filtering  = arg_rem(NULL, "\nTrimming & Filtering:");
+     struct arg_lit *opt_no_filter  = arg_lit0(
+          NULL, "no-filter", 
+          "Switch all filtering off");
      struct arg_int *opt_min5pqual = arg_int0(
           "Q", "min5pqual", "<int>",
           "Trim from start/5'-end if base-call quality is below this value."
@@ -227,12 +245,21 @@ int parse_args(args_t *args, int argc, char *argv[])
           "l", "minlen", "<int>",
           "Discard reads if read length is below this length (discard both reads if"
           " either is below this limit). Default: " XSTR(DEFAULT_MINREADLEN));
+
+     struct arg_rem *rem_sampling  = arg_rem(NULL, "\nSampling:");
+     struct arg_int *opt_sampling = arg_int0(
+          "s", "sampling", "<int>",
+          "Randomly sample roughly every <int>th read (after filtering, if used)");
+
+     struct arg_rem  *rem_checks  = arg_rem(NULL, "\nChecks:");
      struct arg_lit *opt_no_order_check  = arg_lit0(
           NULL, "no-order-check", 
           "Don't check paired-end read order (otherwise checked every " XSTR(PAIRED_ORDER_SAMPLERATE) " reads)");
      struct arg_lit *opt_no_qual_check  = arg_lit0(
           NULL, "no-qual-check", 
           "Don't check quality range (otherwise checked every " XSTR(QUAL_CHECK_SAMPLERATE) " reads)");
+
+     struct arg_rem  *rem_misc  = arg_rem(NULL, "\nMisc:");
      struct arg_lit *opt_force_overwite  = arg_lit0(
           "f", "force-overwrite", 
           "Force overwriting of files");
@@ -255,12 +282,11 @@ int parse_args(args_t *args, int argc, char *argv[])
      opt_min3pqual->ival[0] = DEFAULT_MIN3PQUAL;
      opt_phredoffset->ival[0] = DEFAULT_PHREDOFFSET;
 
-     void *argtable[] = {opt_infq1, opt_infq2, opt_outfq1, opt_outfq2,
-                         opt_min5pqual, opt_min3pqual, 
-                         opt_minreadlen, opt_phredoffset, 
-                         opt_no_order_check, opt_no_qual_check, 
-                         opt_force_overwite,
-                         opt_help, opt_quiet, opt_debug,
+     void *argtable[] = {rem_files, opt_infq1, opt_infq2, opt_outfq1, opt_outfq2,
+                         rem_filtering, opt_no_filter, opt_min5pqual, opt_min3pqual, opt_minreadlen, opt_phredoffset, 
+                         rem_sampling, opt_sampling,
+                         rem_checks, opt_no_order_check, opt_no_qual_check, 
+                         rem_misc, opt_force_overwite, opt_help, opt_quiet, opt_debug,
                          opt_end};    
      
      if (arg_nullcheck(argtable)) {
@@ -289,9 +315,12 @@ int parse_args(args_t *args, int argc, char *argv[])
           return -1;
      }
      
-     args->force_overwite = opt_force_overwite->count;
+
+     args->no_filter = opt_no_filter->count;
      args->no_order_check = opt_no_order_check->count;
      args->no_qual_check = opt_no_qual_check->count;
+
+     args->force_overwite = opt_force_overwite->count;
      if (opt_quiet->count) {
           verbose = 0;
      }
@@ -349,14 +378,14 @@ int parse_args(args_t *args, int argc, char *argv[])
 
      args->min5pqual = opt_min5pqual->ival[0];
      if (args->min5pqual<0) {
-          LOG_ERROR("Invalid quality '%d'\n", args->min5pqual);          
+          LOG_ERROR("Invalid 5' quality '%d'\n", args->min5pqual);          
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
           return -1;            
      }
 
      args->min3pqual = opt_min3pqual->ival[0];
      if (args->min3pqual<0) {
-          LOG_ERROR("Invalid quality '%d'\n", args->min3pqual);          
+          LOG_ERROR("Invalid 3' quality '%d'\n", args->min3pqual);          
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
           return -1;            
      }
@@ -370,21 +399,38 @@ int parse_args(args_t *args, int argc, char *argv[])
 
      
      args->minreadlen = opt_minreadlen->ival[0];
-     if (args->minreadlen<1) {
+#if 0 /* negative values okay. just means no read length filter */
+     if (args->minreadlen<0) {
           LOG_ERROR("Invalid length '%d'\n", args->minreadlen);          
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
           return -1;            
      }
-     
+#endif
+
+     args->sampling = opt_sampling->ival[0];
+#if 0 /* negative values okay. just means no sampling */
+     if (args->sampling<0) {
+          LOG_ERROR("Invalid sampling setting '%d'\n", args->sampling);          
+          arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
+          return -1;            
+     }
+#endif
+
      /* Whew! */
 
      arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
      return 0;
 }
 
+void dump_trim_pos(const trim_pos_t *tp)
+{
+     LOG_DEBUG("trim_pos pos5p=%d\n", tp->pos5p)
+     LOG_DEBUG("trim_pos pos3p=%d\n", tp->pos3p)
+}
 
-/* returns -1 if read is to be discarded. otherwise trim_pos will hold
- * valid (zero-offset) trimming positions.
+/* returns -1 if read is to be discarded, in which case trim_pos
+ * values might be set to arbitrary values. otherwise trim_pos will
+ * hold valid (zero-offset) trimming positions.
  */
 int calc_trim_pos(trim_pos_t *trim_pos, 
                   const kseq_t *seq, const int phredoffset,
@@ -394,8 +440,8 @@ int calc_trim_pos(trim_pos_t *trim_pos,
      int minreadlen;
      int trace = 0; /* local trace, overwriting global */
 
-     trim_pos->pos5p = -1;
-     trim_pos->pos3p = -1;
+     trim_pos->pos5p = -1; /* internal flag */
+     trim_pos->pos3p = -1; /* internal flag */
 
      /* check for neg minreadlen, otherwise logic below won't work */
      if (trim_args->minreadlen >= 1) {
@@ -405,7 +451,7 @@ int calc_trim_pos(trim_pos_t *trim_pos,
      }
 
      if (minreadlen > seq->qual.l) {
-          if (trace) {LOG_DEBUG("%s\n", "Input read already smaller than minreadlen");}
+          LOG_DEBUG("%s\n", "Input read already smaller than minreadlen");
           return -1;
      }
 
@@ -415,7 +461,7 @@ int calc_trim_pos(trim_pos_t *trim_pos,
           for (i=seq->qual.l-1; i >= minreadlen-1; i--) {
                int q = seq->qual.s[i]-phredoffset;
                assert(i>=0);
-               if (trace) {LOG_DEBUG("Checking at 3p pos %d/%d with q %d >= %d\n",
+               if (trace) {LOG_DEBUG("Checking at 3p pos %d/%d if q %d >= %d\n",
                                      i, seq->qual.l, q, trim_args->min3pqual);}
                if (q >= trim_args->min3pqual) {
                     trim_pos->pos3p = i;
@@ -429,7 +475,6 @@ int calc_trim_pos(trim_pos_t *trim_pos,
      } else {
           trim_pos->pos3p = seq->qual.l-1; /* zero offset */
      }
-
 
      /* 5p end 
       */
@@ -467,7 +512,8 @@ int calc_trim_pos(trim_pos_t *trim_pos,
 
 /* prints fastq entry including trailing newline. returns negative
  * number on error. caller has to free buf, which will be allocated
- * here. if trim_pos is not NULL seq will be trimmed accordingly
+ * here. if trim_pos is not NULL or (both values are not -1) seq will
+ * be trimmed accordingly.
  */
 int sprintf_fastq(char **buf, const kseq_t *seq, const trim_pos_t *trim_pos) {
      int ret = 0;
@@ -485,14 +531,22 @@ int sprintf_fastq(char **buf, const kseq_t *seq, const trim_pos_t *trim_pos) {
 
      /* fastq is supposed to have a quality string */
      if (! seq->qual.l){
+          LOG_DEBUG("%s\n", "FastQ is missing a quality string")
           return -1;
      }
 
-     if (NULL != trim_pos) {
+     if (NULL != trim_pos && (trim_pos->pos5p >= 0 && trim_pos->pos3p >= 0)) {
           if (trim_pos->pos5p < 0 || trim_pos->pos3p < 0) {
+               LOG_FATAL("%s\n", "Internal error: Invalid trim pos (5p or 3p < 0)");
                return -1;
           }
           if (trim_pos->pos3p - trim_pos->pos5p + 1 < 0) {
+               LOG_FATAL("%s\n", "Internal error: Invalid trim pos (negative distance between 5p and 3p)");
+               return -1;               
+          }
+          if (trim_pos->pos3p >= seq->qual.l) {
+               LOG_FATAL("Internal error: Invalid 3p trim pos (%d > string length which is %d)\n",
+                         trim_pos->pos3p, seq->qual.l);
                return -1;               
           }
 
@@ -516,7 +570,7 @@ int sprintf_fastq(char **buf, const kseq_t *seq, const trim_pos_t *trim_pos) {
                         seq->name.s, & seq->seq.s[start], & seq->qual.s[start]);
      }
 
-     if (NULL != trim_pos) {
+     if (NULL != trim_pos && (trim_pos->pos5p >= 0 && trim_pos->pos3p >= 0)) {
           /* revert temporary trimming changes */
           seq->seq.s[trim_pos->pos3p+1] = zeroed_base;
           seq->qual.s[trim_pos->pos3p+1] = zeroed_qual;
@@ -533,6 +587,7 @@ int gzprintf_fastq(gzFile fp, const kseq_t *seq, const trim_pos_t *trim_pos) {
 
      ret = sprintf_fastq(&buf, seq, trim_pos);
      if (ret<0) {
+          LOG_ERROR("%s\n", "Couldn't format seq...");
           return ret;
      }
      ret = gzprintf(fp, "%s", buf);
@@ -881,7 +936,9 @@ int main(int argc, char *argv[])
 #ifdef TEST
     return test();
 #endif
+    srand(time(NULL));
 
+   
     if (parse_args(&args, argc, argv)) {
          free_args(& args);
          return EXIT_FAILURE;
@@ -923,11 +980,8 @@ int main(int argc, char *argv[])
     }
     n_reads_in = n_reads_out = 0;
 	while ((len1 = kseq_read(seq1)) >= 0) {
-         trim_pos_t trim_pos_1;
-         trim_pos_t trim_pos_2;
-
-         n_reads_in+=1;
-
+         trim_pos_t *trim_pos_1 = NULL;
+         trim_pos_t *trim_pos_2 = NULL;
          if (trace) {LOG_DEBUG("Inspecting seq1: %s\n", seq1->name.s);}
 
          if (pe_mode) {
@@ -942,41 +996,57 @@ int main(int argc, char *argv[])
               }
               if (trace) {LOG_DEBUG("Inspecting seq2: %s\n", seq2->name.s);}
          }
+         
+         n_reads_in+=1;
+         if (0 == n_reads_in%100000) {
+              LOG_DEBUG("Still alive and happily massaging read %d\n", n_reads_in);
+         }
 
-         /* quality check before trimming to get higher coverage */
+         if (! args.no_filter) {
+              trim_pos_1 = malloc(sizeof(trim_pos_t));
+              trim_pos_1->pos5p = trim_pos_1->pos3p = 1<<20; /* make invalid */
+              trim_pos_2 = malloc(sizeof(trim_pos_t));
+              trim_pos_2->pos5p = trim_pos_2->pos3p = 1<<20; /* make invalid */
+         }
+
+         /* quality check: done before trimming to see more reads
+          */
          if (! args.no_qual_check && 1 == (n_reads_in%QUAL_CHECK_SAMPLERATE)) {
               if (! qual_range_is_valid(seq1, args.phredoffset)) {
                    LOG_ERROR("Read %s has qualities outside valid range (%s). %s\n",
                              seq1->name.s, seq1->qual.s, EARLY_EXIT_MESSAGE);
                    rc = EXIT_FAILURE;
+                   free(trim_pos_1); free(trim_pos_2);
                    goto free_and_exit;
               }
          }
 
-         if (-1 == calc_trim_pos(&trim_pos_1, seq1, 
-                                 args.phredoffset, &trim_args)) {
+         if (! args.no_filter && -1 == calc_trim_pos(trim_pos_1, seq1, 
+                                                   args.phredoffset, &trim_args)) {
               if (trace) {LOG_DEBUG("%s\n", "seq1 to be discarded");}
+              free(trim_pos_1); free(trim_pos_2);
               continue;
          }
 
 
          if (pe_mode) {
-              /* quality check before trimming to get higher coverage */
               if (! args.no_qual_check && 1 == (n_reads_in%QUAL_CHECK_SAMPLERATE)) {
                    if (! qual_range_is_valid(seq1, args.phredoffset)) {
                         LOG_ERROR("Read %s has qualities outside valid range (%s). %s\n",
                                   seq1->name.s, seq1->qual.s, EARLY_EXIT_MESSAGE);
                         rc = EXIT_FAILURE;
+                        free(trim_pos_1); free(trim_pos_2);
                         goto free_and_exit;
                    }
               }
 
-              if (-1 == calc_trim_pos(&trim_pos_2, seq2, 
-                                      args.phredoffset, &trim_args)) {
+              if (! args.no_filter && -1 == calc_trim_pos(trim_pos_2, seq2, 
+                                                          args.phredoffset, &trim_args)) {
                    if (trace) {LOG_DEBUG("%s\n", "seq2 to be discarded");}
+                   free(trim_pos_1); free(trim_pos_2);
                    continue;
               }
-
+              
               if (! args.no_order_check && ! read_order_warning_issued
                   && (1 == (n_reads_in%PAIRED_ORDER_SAMPLERATE))) {
                    rc = reads_are_paired(seq1, seq2);
@@ -986,6 +1056,7 @@ int main(int argc, char *argv[])
                                        " Checked reads names were %s and %s. %s\n",
                                        seq1->name.s, seq2->name.s, EARLY_EXIT_MESSAGE);
                              rc = EXIT_FAILURE;
+                             free(trim_pos_1); free(trim_pos_2);
                              goto free_and_exit;
            
                         } else if (-1 == rc) {
@@ -997,31 +1068,46 @@ int main(int argc, char *argv[])
                    }
                    LOG_DEBUG("read order okay for %s and %s\n", 
                              seq1->name.s, seq2->name.s);
-
               }
          }
 
-         if (0 >= gzprintf_fastq(fp_outfq1, seq1, &trim_pos_1)) {
+         if (args.sampling>1) {
+              /* random int ranging from 1 to args.sampling */
+              int r = rand()%args.sampling+1; 
+              if (r != args.sampling) {
+                   free(trim_pos_1); free(trim_pos_2);
+                   continue;
+              }
+         }
+
+         LOG_DEBUG("Made it to writing stage with trim_pos_1=%p trim_pos_2=%p\n", trim_pos_1, trim_pos_2);
+         LOG_DEBUG("%s\n", "trim pos 1");
+         dump_trim_pos(trim_pos_1);
+         LOG_DEBUG("%s\n", "trim pos 2");
+         dump_trim_pos(trim_pos_2);
+
+         if (0 >= gzprintf_fastq(fp_outfq1, seq1, trim_pos_1)) {
               LOG_ERROR("Couldn't write to %s (after successfully writing"
                         "  %d reads). Exiting...\n",
                         args.outfq1, n_reads_out);
               rc = EXIT_FAILURE;
+              free(trim_pos_1); free(trim_pos_2);
               goto free_and_exit;
          }
 
-         if (pe_mode) {
-              if (0 >= gzprintf_fastq(fp_outfq2, seq2, &trim_pos_2)) {
-                   LOG_ERROR("Couldn't write to %s (after successfully"
-                             " writing %d reads). %s\n",
-                             args.outfq2, n_reads_out,
-                             EARLY_EXIT_MESSAGE);
-                   rc = EXIT_FAILURE;
-                   goto free_and_exit;
-              }
+         if (pe_mode && 0 >= gzprintf_fastq(fp_outfq2, seq2, trim_pos_2)) {
+              LOG_ERROR("Couldn't write to %s (after successfully"
+                        " writing %d reads). %s\n",
+                        args.outfq2, n_reads_out,
+                        EARLY_EXIT_MESSAGE);
+              rc = EXIT_FAILURE;
+              free(trim_pos_1); free(trim_pos_2);
+              goto free_and_exit;
          }
 
          n_reads_out+=1;
-	}
+    }
+    /* while len1 */
 
 	if (pe_mode) {
          if ((len2 = kseq_read(seq2)) >= 0) {
