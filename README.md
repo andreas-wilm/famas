@@ -37,3 +37,38 @@ package, you will first have to run
 
 to set up the needed autotools files.
 
+
+Usage
+=====
+
+famas -h will produce the following help:
+
+    famas (0.0.4) - yet another program for FAstq MASsaging
+    
+    Usage: famas [-fh] -i <file> [-j <file>] -o <file> [-p <file>] [--no-filter] [-Q <int>] [-q <int>] [-l <int>] [-e <33|64>] [-s <int>] [--no-order-check] [--no-qual-check] [--quiet] [--debug]
+                                
+    Files:
+      -i, --in1=<file>          Input FastQ file (gzip supported; '-' for stdin)
+      -j, --in2=<file>          Other input FastQ file if paired-end (gzip supported)
+      -o, --out1=<file>         Output FastQ file (will be gzipped; '-' for stdout)
+      -p, --out2=<file>         Other output FastQ file if paired-end input (will be gzipped)
+                                
+    Trimming & Filtering:
+      --no-filter               Switch all filtering off
+      -Q, --min5pqual=<int>     Trim from start/5'-end if base-call quality is below this value. Default: 0
+      -q, --min3pqual=<int>     Trim from end/3'-end if base-call quality is below this value (Illumina guidelines recommend 3). Default: 3
+      -l, --minlen=<int>        Discard reads if read length is below this length (discard both reads if either is below this limit). Default: 60
+      -e, --phred=<33|64>       Qualities are ASCII-encoded Phred +33 (e.g. Sanger, SRA, Illumina 1.8+) or +64 (e.g. Illumina 1.3-1.7). Default: 33
+                                
+    Sampling:
+      -s, --sampling=<int>      Randomly sample roughly every <int>th read (after filtering, if used)
+                                
+    Checks:
+      --no-order-check          Don't check paired-end read order (otherwise checked every 1000 reads)
+      --no-qual-check           Don't check quality range (otherwise checked every 1000 reads)
+                                
+    Misc:
+      -f, --force-overwrite     Force overwriting of files
+      -h, --help                Print this help and exit
+      --quiet                   No output, except errors
+      --debug                   Print debugging info
