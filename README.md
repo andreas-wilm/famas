@@ -5,16 +5,17 @@ Yet another program for FastQ massaging (trimming, filtering and
 sampling). This one has proper paired-end support and supports gzipped
 input as well as output (also on stdin and stdout) and it's fast.
 
-Started this little project, because my original Biopython script was
-terribly slow. Besides, I always wanted to use Heng Li's kseq.h.
-
 
 Installation
 ============
 
-You will need libz and libargtable2 installed on your system for
-compilation. Download the latest package from the dist directory and
-do the GNU triple jump:
+Famas depends on [libz](http://www.zlib.net/) ,
+[argtable3](http://www.argtable.org) and
+[Heng Li's kseq](http://lh3lh3.users.sourceforge.net/kseq.shtml). The
+latter two come with the famas source and libz is very likely already
+installed in your system.
+
+Unpack the source and do the GNU triple jump:
 
     ./configure
     make
@@ -23,7 +24,7 @@ do the GNU triple jump:
 If configure complains about missing libraries of which you are sure
 they are installed, just in an unusual directory, modify your CFLAGS
 and LDFLAGS environment variables accordingly. For example, if you
-have libargtable2 installed via Macports which resides in /opt/local
+have libz installed via Macports which resides in /opt/local
 you might want to use:
 
     ./configure CFLAGS='-I/opt/local/include'  LDFLAGS='-L/opt/local/lib'
@@ -35,7 +36,12 @@ package, you will first have to run
     autoreconf
     automake --add-missing
 
-to set up the needed autotools files.
+and possibly
+
+    [g]libtoolize
+    autoreconf
+
+only once to set up the needed autotools files (configure and Makefile.ins).
 
 
 Usage
@@ -43,9 +49,9 @@ Usage
 
 famas -h will produce the following help:
 
-    famas (0.0.4) - yet another program for FAstq MASsaging
+    famas (0.0.6) - yet another program for FAstq MASsaging
     
-    Usage: famas [-fh] -i <file> [-j <file>] -o <file> [-p <file>] [--no-filter] [-Q <int>] [-q <int>] [-l <int>] [-e <33|64>] [-s <int>] [--no-order-check] [--no-qual-check] [--quiet] [--debug]
+    Usage: famas  [-fh] -i <file> [-j <file>] -o <file> [-p <file>] [--no-filter] [-Q <int>] [-q <int>] [-l <int>] [-e <33|64>] [-s <int>] [--no-order-check] [--no-qual-check] [--quiet] [--debug]
                                 
     Files:
       -i, --in1=<file>          Input FastQ file (gzip supported; '-' for stdin)
@@ -54,7 +60,7 @@ famas -h will produce the following help:
       -p, --out2=<file>         Other output FastQ file if paired-end input (will be gzipped)
                                 
     Trimming & Filtering:
-      --no-filter               Switch all filtering off
+      --no-filter               Switch all filtering off (none of the options in this sections apply then)
       -Q, --min5pqual=<int>     Trim from start/5'-end if base-call quality is below this value. Default: 0
       -q, --min3pqual=<int>     Trim from end/3'-end if base-call quality is below this value (Illumina guidelines recommend 3). Default: 3
       -l, --minlen=<int>        Discard reads if read length is below this length (discard both reads if either is below this limit). Default: 60
@@ -72,3 +78,4 @@ famas -h will produce the following help:
       -h, --help                Print this help and exit
       --quiet                   No output, except errors
       --debug                   Print debugging info
+    

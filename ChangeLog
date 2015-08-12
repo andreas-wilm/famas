@@ -1,0 +1,2 @@
+version 0.0.5: Andreas Wilm
+		- added argtable3 as source inclusion and remove argtable2 lib dependency

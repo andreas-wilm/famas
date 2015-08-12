@@ -30,10 +30,11 @@
 #include <unistd.h>
 #include <time.h>
 
-#include <argtable2.h>
 #include <zlib.h>
 
-#include "kseq.h"
+#include "argtable3/argtable3.h"
+#include "kseq/kseq.h"
+
 KSEQ_INIT(gzFile, gzread)
 
 /* defaults:
@@ -227,7 +228,7 @@ int parse_args(args_t *args, int argc, char *argv[])
      struct arg_rem  *rem_filtering  = arg_rem(NULL, "\nTrimming & Filtering:");
      struct arg_lit *opt_no_filter  = arg_lit0(
           NULL, "no-filter", 
-          "Switch all filtering off");
+          "Switch all filtering off (none of the options in this sections apply then)");
      struct arg_int *opt_min5pqual = arg_int0(
           "Q", "min5pqual", "<int>",
           "Trim from start/5'-end if base-call quality is below this value."
@@ -1130,6 +1131,5 @@ free_and_exit:
     }
     free_args(& args);
 
-	return rc;
+    return rc;
 }
-

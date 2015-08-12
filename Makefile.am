@@ -1,1 +1,2 @@
 SUBDIRS = src
+EXTRADIST = README.md TODO.md

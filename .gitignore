@@ -30,3 +30,6 @@ autom4te.cache
 
 # backups
 *~
+compile
+src/argtable3/.dirstamp
+tmp/
