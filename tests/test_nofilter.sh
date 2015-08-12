@@ -2,7 +2,7 @@ source lib.sh || exit 1
 
 i=./fastq-sanger/mux079-pdm003_s1.fastq.gz
 
-md5orig=$(zcat $i | $md5 | cut -f 1 -d ' ')
+md5orig=$(gzip -dc $i | $md5 | cut -f 1 -d ' ')
 
 #cat <<EOF
 cmd="$famas --quiet -f -l 30 --no-filter -i $i -o -"

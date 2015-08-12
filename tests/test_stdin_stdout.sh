@@ -6,7 +6,7 @@ o=$(mktemp -t $(basename $0).XXXXXX)
 p=$(mktemp -t $(basename $0).XXXXXX)
 rm -f $o $p
 
-zcat $i | $famas -i - -j $j -o $o -p $p -l 20 --quiet || exit 1
+gzip -dc $i | $famas -i - -j $j -o $o -p $p -l 20 --quiet || exit 1
 rm -f $o $p
 
 cat $i | $famas -i - -j $j -o $o -p $p -l 20 --quiet || exit 1

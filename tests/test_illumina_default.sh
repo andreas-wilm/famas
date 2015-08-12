@@ -11,8 +11,8 @@ if ! eval $cmd; then
     echoerror "The following command failed: $cmd"
     exit 1
 fi
-md5orig=$(zcat ${i%.fastq.gz}_3pq3l60.fastq.gz ${j%.fastq.gz}_3pq3l60.fastq.gz | $md5 | cut -f 1 -d ' ')
-md5new=$(zcat $o $p | $md5 | cut -f 1 -d ' ')
+md5orig=$(gzip -dc ${i%.fastq.gz}_3pq3l60.fastq.gz ${j%.fastq.gz}_3pq3l60.fastq.gz | $md5 | cut -f 1 -d ' ')
+md5new=$(gzip -dc $o $p | $md5 | cut -f 1 -d ' ')
 #echodebug "md5orig=$md5orig md5new=$md5new"
 test $md5orig == $md5new || exit 1
 rm -f $o $p

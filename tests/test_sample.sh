@@ -2,7 +2,7 @@ source lib.sh || exit 1
 
 i=./fastq-sanger/mux079-pdm003_s1.fastq.gz
 
-num_orig=$(zcat $i | grep -c '^@HWI')
+num_orig=$(gzip -dc $i | grep -c '^@HWI')
 
 #cat <<EOF
 cmd="$famas --quiet --no-filter -s 2 -i $i -o -"
