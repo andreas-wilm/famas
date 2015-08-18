@@ -85,7 +85,8 @@ typedef struct {
 
      int no_order_check;
      int no_qual_check;
-     int force_overwite;
+     int overwrite_output;
+     int append_to_output;
 } args_t;
 
 
@@ -173,7 +174,8 @@ void dump_args(const args_t *args)
 
      LOG_DEBUG("  no_order_check     = %d\n", args->no_order_check);
      LOG_DEBUG("  no_qual_check      = %d\n", args->no_qual_check);
-     LOG_DEBUG("  force_overwite     = %d\n", args->force_overwite);
+     LOG_DEBUG("  overwrite_output     = %d\n", args->overwrite_output);
+     LOG_DEBUG("  append_to_output     = %d\n", args->append_to_output);
 }
 
 
@@ -261,9 +263,12 @@ int parse_args(args_t *args, int argc, char *argv[])
           "Don't check quality range (otherwise checked every " XSTR(QUAL_CHECK_SAMPLERATE) " reads)");
 
      struct arg_rem  *rem_misc  = arg_rem(NULL, "\nMisc:");
-     struct arg_lit *opt_force_overwite  = arg_lit0(
-          "f", "force-overwrite", 
-          "Force overwriting of files");
+     struct arg_lit *opt_overwrite_output  = arg_lit0(
+          "f", "overwrite", 
+          "Overwrite output files");
+     struct arg_lit *opt_append_to_output  = arg_lit0(
+          "a", "append", 
+          "Append to output files");
      struct arg_lit *opt_help = arg_lit0(
           "h", "help",
           "Print this help and exit");
@@ -287,7 +292,7 @@ int parse_args(args_t *args, int argc, char *argv[])
                          rem_filtering, opt_no_filter, opt_min5pqual, opt_min3pqual, opt_minreadlen, opt_phredoffset, 
                          rem_sampling, opt_sampling,
                          rem_checks, opt_no_order_check, opt_no_qual_check, 
-                         rem_misc, opt_force_overwite, opt_help, opt_quiet, opt_debug,
+                         rem_misc, opt_overwrite_output, opt_append_to_output, opt_help, opt_quiet, opt_debug,
                          opt_end};    
      
      if (arg_nullcheck(argtable)) {
@@ -321,7 +326,13 @@ int parse_args(args_t *args, int argc, char *argv[])
      args->no_order_check = opt_no_order_check->count;
      args->no_qual_check = opt_no_qual_check->count;
 
-     args->force_overwite = opt_force_overwite->count;
+     args->overwrite_output = opt_overwrite_output->count;
+     args->append_to_output = opt_append_to_output->count;
+     if (args->overwrite_output && args->append_to_output) {
+          LOG_ERROR("%s\n", "Can't append and overwrite at the same time");
+          arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
+          return -1;
+     }
      if (opt_quiet->count) {
           verbose = 0;
      }
@@ -338,10 +349,12 @@ int parse_args(args_t *args, int argc, char *argv[])
      }
 
      args->outfq1 = strdup(opt_outfq1->filename[0]);
-     if (0 != strncmp(args->outfq1, "-", 1) && file_exists(args->outfq1) && ! args->force_overwite) {
-          LOG_ERROR("Cowardly refusing to overwrite existing file %s\n", args->outfq1);
-          arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-          return -1;
+     if (0 != strncmp(args->outfq1, "-", 1) && file_exists(args->outfq1)) {
+          if (! args->overwrite_output && ! args->append_to_output) {
+               LOG_ERROR("Cowardly refusing to overwrite existing file %s\n", args->outfq1);
+               arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
+               return -1;
+          }
      }
 
      if (opt_infq2->count) {
@@ -364,10 +377,12 @@ int parse_args(args_t *args, int argc, char *argv[])
           }
 
           args->outfq2 = strdup(opt_outfq2->filename[0]);
-          if (file_exists(args->outfq2) && ! args->force_overwite) {
-               LOG_ERROR("Cowardly refusing to overwrite existing file %s\n", args->outfq2);
-               arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-               return -1;
+          if (file_exists(args->outfq2)) {
+               if (! args->overwrite_output && ! args->append_to_output) {
+                    LOG_ERROR("Cowardly refusing to overwrite existing file %s\n", args->outfq2);
+                    arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
+                    return -1;
+               }
           }
      } else {
           if (opt_outfq2->count) {
@@ -933,6 +948,9 @@ int main(int argc, char *argv[])
     trim_args_t trim_args;
     int rc;
     int read_order_warning_issued = 0;
+    char outmode[2];/* output mode for both fq files */
+
+    strcpy(outmode, "w");
 
 #ifdef TEST
     return test();
@@ -955,19 +973,31 @@ int main(int argc, char *argv[])
          pe_mode = 1;
     }
 
+    /* open input and output fq1 
+     */
     fp_infq1 = (0 == strcmp(args.infq1, "-")) ? 
          gzdopen(fileno(stdin), "r") : gzopen(args.infq1, "r");
-    fp_outfq1 = (0 == strcmp(args.outfq1, "-")) ? 
-         gzdopen(fileno(stdout), "w") : gzopen(args.outfq1, "w");
+    if (0 == strcmp(args.outfq1, "-")) {
+         fp_outfq1 = gzdopen(fileno(stdout), "w");
+    } else {
+         if (args.append_to_output) {
+              strcpy(outmode, "a");
+         }
+         /* LOG_DEBUG("outmode=%s", outmode); */
+         fp_outfq1 = gzopen(args.outfq1, outmode);
+    }
     if (NULL == fp_infq1 || NULL == fp_outfq1) {
          LOG_ERROR("%s\n", "Couldn't open files. Exiting...");
          free_args(& args);
          return EXIT_FAILURE;
     }
 
+    /* open input and output fq2
+     */
 	if (pe_mode) {
          fp_infq2 = gzopen(args.infq2, "r");
-         fp_outfq2 = gzopen(args.outfq2, "w");
+         /* outmode identical to fq1 */ 
+        fp_outfq2 = gzopen(args.outfq2, outmode);
          if (NULL == fp_infq2 || NULL == fp_outfq2) {
               LOG_ERROR("%s\n", "Couldn't open files. Exiting...");
               free_args(& args);

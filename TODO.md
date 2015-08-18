@@ -1,2 +1,4 @@
 - support filtering of N's, such that reads won't contain x N's
 - --help redirects to stderr and stdout
+- support github release tarballs
+
