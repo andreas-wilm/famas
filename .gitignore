@@ -33,3 +33,6 @@ autom4te.cache
 compile
 src/argtable3/.dirstamp
 tmp/
+
+# data
+data/*fastq.gz

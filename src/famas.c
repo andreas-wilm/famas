@@ -29,13 +29,16 @@
 #include <assert.h>
 #include <unistd.h>
 #include <time.h>
+#include <math.h>
 
 #include <zlib.h>
 
 #include "argtable3/argtable3.h"
 #include "kseq/kseq.h"
 
+
 KSEQ_INIT(gzFile, gzread)
+
 
 /* defaults:
  * most can be overwritten during compile time, e.g.
@@ -48,7 +51,7 @@ KSEQ_INIT(gzFile, gzread)
 #define DEFAULT_MIN5PQUAL 0
 #endif
 #ifndef DEFAULT_MINREADLEN
-#define DEFAULT_MINREADLEN 60
+#define DEFAULT_MINREADLEN 30
 #endif
 #ifndef DEFAULT_PHREDOFFSET
 #define DEFAULT_PHREDOFFSET 33
@@ -60,6 +63,9 @@ KSEQ_INIT(gzFile, gzread)
 #define QUAL_CHECK_SAMPLERATE 1000
 #endif
 #define EARLY_EXIT_MESSAGE "Don't trust already produced results. Exiting..."
+
+#define TEMPLATE_MARK "XXXXXX"
+#define TEMPLATE_FMT "%06d"
 
 /* print macro argument as string */
 #define XSTR(a) STR(a)
@@ -82,6 +88,7 @@ typedef struct {
      int minreadlen;
 
      int sampling;
+     int split_every;
 
      int no_order_check;
      int no_qual_check;
@@ -115,7 +122,10 @@ int trace = 1;
 int trace = 0;
 #endif
 
+
 /* print only if debug is true*/
+
+/* careful: for all of these you always need at least one fmt string */
 #define LOG_DEBUG(fmt, args...)     {if (debug) {(void)vout(stderr, "DEBUG(%s|%s): " fmt, __FILE__, __FUNCTION__, ## args);}}
 /* print only if verbose is true*/
 #define LOG_INFO(fmt, args...)      {if (verbose) {(void)vout(stderr, fmt, ## args);}}
@@ -127,6 +137,7 @@ int trace = 0;
 /* always print fixme's */
 #define LOG_FIXME(fmt, args...)     (void)vout(stderr, "FIXME(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
 #define LOG_TEST(fmt, args...)      (void)vout(stderr, "TESTING(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
+
 
 /* Taken from the Linux kernel source and slightly modified.
  */
@@ -171,6 +182,7 @@ void dump_args(const args_t *args)
      LOG_DEBUG("  minreadlen         = %d\n", args->minreadlen);
 
      LOG_DEBUG("  sampling           = %d\n", args->sampling);
+     LOG_DEBUG("  split_every        = %d\n", args->split_every);
 
      LOG_DEBUG("  no_order_check     = %d\n", args->no_order_check);
      LOG_DEBUG("  no_qual_check      = %d\n", args->no_qual_check);
@@ -191,6 +203,20 @@ void free_args(args_t *args)
      args->outfq2 = NULL;
 }
 
+
+int template_mark_counts(const char *str)
+{
+     int mark_counts= 0;
+     while (1) {
+          str = strstr(str, TEMPLATE_MARK);
+          if (!str) {
+               break;
+          }
+          mark_counts++;
+          str++;
+     }
+     return mark_counts;
+}
 
 /* Parses command line arguments and sets members in args accordingly.
  * Also sets defaults and performs logic checks. Returns -1 on error
@@ -253,6 +279,9 @@ int parse_args(args_t *args, int argc, char *argv[])
      struct arg_int *opt_sampling = arg_int0(
           "s", "sampling", "<int>",
           "Randomly sample roughly every <int>th read (after filtering, if used)");
+     struct arg_int *opt_split_every = arg_int0(
+          "x", "split-every", "<int>",
+          "Create new output after every <int'th> read. Requires " XSTR(TEMPLATE_MARK) " in output names, which will be replaced with split number");
 
      struct arg_rem  *rem_checks  = arg_rem(NULL, "\nChecks:");
      struct arg_lit *opt_no_order_check  = arg_lit0(
@@ -290,7 +319,7 @@ int parse_args(args_t *args, int argc, char *argv[])
 
      void *argtable[] = {rem_files, opt_infq1, opt_infq2, opt_outfq1, opt_outfq2,
                          rem_filtering, opt_no_filter, opt_min5pqual, opt_min3pqual, opt_minreadlen, opt_phredoffset, 
-                         rem_sampling, opt_sampling,
+                         rem_sampling, opt_sampling, opt_split_every,
                          rem_checks, opt_no_order_check, opt_no_qual_check, 
                          rem_misc, opt_overwrite_output, opt_append_to_output, opt_help, opt_quiet, opt_debug,
                          opt_end};    
@@ -308,8 +337,8 @@ int parse_args(args_t *args, int argc, char *argv[])
           fprintf(stderr, "%s (%s) - yet another program for FAstq MASsaging\n\n",
                   PACKAGE_NAME, PACKAGE_VERSION);
           fprintf(stderr, "Usage: %s", PACKAGE_NAME);
-          arg_print_syntax(stdout, argtable, "\n");
-          arg_print_glossary(stdout, argtable, "  %-25s %s\n");
+          arg_print_syntax(stderr, argtable, "\n");
+          arg_print_glossary(stderr, argtable, "  %-25s %s\n");
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
           exit(0);
      }
@@ -341,6 +370,7 @@ int parse_args(args_t *args, int argc, char *argv[])
           verbose = 1;
      }
 
+
      args->infq1 = strdup(opt_infq1->filename[0]);
      if (0 != strncmp(args->infq1, "-", 1) && ! file_exists(args->infq1)) {
           LOG_ERROR("File %s does not exist\n", args->infq1);
@@ -349,14 +379,6 @@ int parse_args(args_t *args, int argc, char *argv[])
      }
 
      args->outfq1 = strdup(opt_outfq1->filename[0]);
-     if (0 != strncmp(args->outfq1, "-", 1) && file_exists(args->outfq1)) {
-          if (! args->overwrite_output && ! args->append_to_output) {
-               LOG_ERROR("Cowardly refusing to overwrite existing file %s\n", args->outfq1);
-               arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-               return -1;
-          }
-     }
-
      if (opt_infq2->count) {
           args->infq2 = strdup(opt_infq2->filename[0]);
           if (0 == strcmp(args->infq2, args->infq1)) {
@@ -364,6 +386,7 @@ int parse_args(args_t *args, int argc, char *argv[])
                arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
                return -1;              
           }
+
           if (! file_exists(args->infq2)) {
                LOG_ERROR("File %s does not exist\n", args->infq2);
                arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
@@ -377,13 +400,7 @@ int parse_args(args_t *args, int argc, char *argv[])
           }
 
           args->outfq2 = strdup(opt_outfq2->filename[0]);
-          if (file_exists(args->outfq2)) {
-               if (! args->overwrite_output && ! args->append_to_output) {
-                    LOG_ERROR("Cowardly refusing to overwrite existing file %s\n", args->outfq2);
-                    arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-                    return -1;
-               }
-          }
+
      } else {
           if (opt_outfq2->count) {
                LOG_ERROR("%s\n", "Got second output file, not a corresponding second input file");
@@ -432,17 +449,35 @@ int parse_args(args_t *args, int argc, char *argv[])
      }
 #endif
 
+     args->split_every = opt_split_every->ival[0];
+     if (args->split_every>0) {
+          if (1 != template_mark_counts(args->outfq1)) {
+               LOG_ERROR("Need %s exactly once as number template in output filename for requested splitting\n", TEMPLATE_MARK);
+               arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));               
+               return -1;
+          }
+          if (args->outfq2) {
+               if (1 != template_mark_counts(args->outfq2)) {
+                    LOG_ERROR("Need %s as number template in output filename for requested splitting\n", TEMPLATE_MARK);
+                    arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));               
+                    return -1;
+               }
+          }
+     }
+
      /* Whew! */
 
      arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
      return 0;
 }
 
+
 void dump_trim_pos(const trim_pos_t *tp)
 {
      LOG_DEBUG("trim_pos pos5p=%d\n", tp->pos5p)
      LOG_DEBUG("trim_pos pos3p=%d\n", tp->pos3p)
 }
+
 
 /* returns -1 if read is to be discarded, in which case trim_pos
  * values might be set to arbitrary values. otherwise trim_pos will
@@ -936,6 +971,110 @@ int qual_range_is_valid(const kseq_t *seq, const int phredoffset)
 }
 
 
+/* caller has to free out */
+int replace_template_mark_with_no(char *in, char **out, int split_no) {
+     char *template_mark = strstr(in, TEMPLATE_MARK);
+     char repl_str[1024];
+     int i;
+     int pos;
+
+     if (! template_mark) {
+          LOG_ERROR("%s\n", "template mark not found\n");
+          return 1;
+     }
+     if (split_no >= pow(10, strlen(TEMPLATE_MARK))) {
+          LOG_ERROR("%s\n", "split number too large\n");
+          return 1;
+     }
+     (*out) = strdup(in);
+     sprintf(repl_str, TEMPLATE_FMT, split_no);
+     
+     pos = template_mark-in;
+     for (i=0; i<strlen(TEMPLATE_MARK); i++) {
+          (*out)[pos+i] = repl_str[i];
+     }
+
+     return 0;
+}
+
+
+int open_output_one(gzFile *fp_outfq, char *outfq, 
+                    int append, int overwrite, int split_no) {
+     char *fname;
+     char outmode[2];/* output mode for both fq files */
+     strcpy(outmode, "w");
+     if (append) {
+          strcpy(outmode, "a");
+     }    
+
+     if (0 == strcmp(outfq, "-")) {
+          if (split_no > 0) {
+               LOG_FATAL("%s\n", "Split with stdout as output not possible");
+               return 1;
+          }
+          (*fp_outfq) = gzdopen(fileno(stdout), "w");
+     } else {
+          if (append) {
+               strcpy(outmode, "a");
+          }
+          if (split_no > 0) {
+               if (replace_template_mark_with_no(outfq, &fname, split_no)) {
+                    return 1;
+               }
+          } else {
+               fname = outfq;
+          }
+          
+          if (file_exists(fname) && (! overwrite && ! append)) {
+               LOG_ERROR("Cowardly refusing to overwrite existing file %s\n", fname);
+               return 1;
+               if (fname != outfq) {
+                    free(fname);
+               }
+          }
+          
+          (*fp_outfq) = gzopen(fname, outmode);
+          
+          if (fname != outfq) {
+               free(fname);
+          }
+          
+     }
+
+     if (NULL == (*fp_outfq)) {
+          LOG_ERROR("Couldn't open %s\n", fname);
+          return 1;
+     }
+     return 0;
+}
+
+
+/* fq1 one might be stdout. fq2 might be NULL. split_no used if >0 */
+int open_output(gzFile *fp_outfq1, gzFile *fp_outfq2, 
+                char *outfq1, char *outfq2, 
+                int append, int overwrite, int split_no)
+{
+     int rc;
+
+#ifdef TRACE
+    LOG_DEBUG("open_output(): fp_outfq1=%p fp_outfq2=%p outfq1=%s outfq2=%s append=%d overwrite=%d split_no=%d\n", 
+              fp_outfq1, fp_outfq2, outfq1, outfq2, append, overwrite, split_no);
+#endif
+
+    rc = open_output_one(fp_outfq1, outfq1, append, overwrite, split_no);
+    if (rc) {
+         return rc;
+    }
+    
+    if (outfq2) {
+         rc = open_output_one(fp_outfq2, outfq2, append, overwrite, split_no);
+         if (rc) {
+              return rc;
+         }
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     args_t args = { 0 };
@@ -948,9 +1087,9 @@ int main(int argc, char *argv[])
     trim_args_t trim_args;
     int rc;
     int read_order_warning_issued = 0;
-    char outmode[2];/* output mode for both fq files */
+    int split_no = 0;
 
-    strcpy(outmode, "w");
+
 
 #ifdef TEST
     return test();
@@ -968,43 +1107,31 @@ int main(int argc, char *argv[])
     trim_args.min5pqual = args.min5pqual;
     trim_args.min3pqual = args.min3pqual;;
     trim_args.minreadlen = args.minreadlen;
-
+    if (args.split_every) {
+         split_no = 1;
+    }
     if (args.infq2) {
          pe_mode = 1;
     }
 
-    /* open input and output fq1 
+    /* open input fqs
      */
     fp_infq1 = (0 == strcmp(args.infq1, "-")) ? 
          gzdopen(fileno(stdin), "r") : gzopen(args.infq1, "r");
-    if (0 == strcmp(args.outfq1, "-")) {
-         fp_outfq1 = gzdopen(fileno(stdout), "w");
-    } else {
-         if (args.append_to_output) {
-              strcpy(outmode, "a");
-         }
-         /* LOG_DEBUG("outmode=%s", outmode); */
-         fp_outfq1 = gzopen(args.outfq1, outmode);
-    }
-    if (NULL == fp_infq1 || NULL == fp_outfq1) {
-         LOG_ERROR("%s\n", "Couldn't open files. Exiting...");
+    if (NULL == fp_infq1) {
+         LOG_ERROR("%s\n", "Couldn't open %s. Exiting...", args.infq1);
          free_args(& args);
          return EXIT_FAILURE;
     }
-
-    /* open input and output fq2
-     */
-	if (pe_mode) {
+	if (args.infq2) {
          fp_infq2 = gzopen(args.infq2, "r");
-         /* outmode identical to fq1 */ 
-        fp_outfq2 = gzopen(args.outfq2, outmode);
-         if (NULL == fp_infq2 || NULL == fp_outfq2) {
-              LOG_ERROR("%s\n", "Couldn't open files. Exiting...");
+         if (NULL == fp_infq2) {
+              LOG_ERROR("%s\n", "Couldn't open %s. Exiting...", args.infq2);
               free_args(& args);
               return EXIT_FAILURE;
          }
     }
-  
+
 	seq1 = kseq_init(fp_infq1);
 	if (pe_mode) {
          seq2 = kseq_init(fp_infq2);
@@ -1052,8 +1179,8 @@ int main(int argc, char *argv[])
               }
          }
 
-         if (! args.no_filter && -1 == calc_trim_pos(trim_pos_1, seq1, 
-                                                   args.phredoffset, &trim_args)) {
+         if (! args.no_filter && -1 == calc_trim_pos(
+                  trim_pos_1, seq1, args.phredoffset, &trim_args)) {
               if (trace) {LOG_DEBUG("%s\n", "seq1 to be discarded");}
               free(trim_pos_1); free(trim_pos_2);
               continue;
@@ -1071,13 +1198,15 @@ int main(int argc, char *argv[])
                    }
               }
 
-              if (! args.no_filter && -1 == calc_trim_pos(trim_pos_2, seq2, 
-                                                          args.phredoffset, &trim_args)) {
+              if (! args.no_filter && -1 == calc_trim_pos(
+                       trim_pos_2, seq2, args.phredoffset, &trim_args)) {
                    if (trace) {LOG_DEBUG("%s\n", "seq2 to be discarded");}
                    free(trim_pos_1); free(trim_pos_2);
                    continue;
               }
               
+              /* read order check (PE only)
+               */
               if (! args.no_order_check && ! read_order_warning_issued
                   && (1 == (n_reads_in%PAIRED_ORDER_SAMPLERATE))) {
                    rc = reads_are_paired(seq1, seq2);
@@ -1108,6 +1237,35 @@ int main(int argc, char *argv[])
               if (r != args.sampling) {
                    free(trim_pos_1); free(trim_pos_2);
                    continue;
+              }
+         }
+
+
+         /* 
+          * output 
+          *
+          */
+
+         if (n_reads_out==0 || (args.split_every && (n_reads_out % args.split_every == 0))) {
+              if (args.split_every==0) {
+                   split_no = 0;
+              } else {
+                   split_no = n_reads_out / args.split_every + 1;
+              }
+
+              if (fp_outfq1) {
+                   gzclose(fp_outfq1);
+              }
+              if (fp_outfq2) {
+                   gzclose(fp_outfq2);
+              }
+
+              if (open_output(&fp_outfq1, &fp_outfq2, 
+                              args.outfq1, args.outfq2, 
+                              args.append_to_output, args.overwrite_output, split_no)) {
+                   LOG_ERROR("%s\n", "Couldn't open output files. Exiting...");
+                   free_args(& args);
+                   return EXIT_FAILURE;
               }
          }
 
