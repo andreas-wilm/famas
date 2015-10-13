@@ -72,8 +72,8 @@ KSEQ_INIT(gzFile, gzread)
 #define STR(a) #a
 
 
-/* check if pointer is NULL and if true return -1 */
-#define NULLCHECK(x) if(NULL==(x)) {fprintf(stderr, "FATAL(%s|%s:%d): memory allocation error\n", __FILE__, __FUNCTION__, __LINE__); return -1;}
+/* check if pointer is NULL and if true return 1 */
+#define NULLCHECK(x) if(NULL==(x)) {fprintf(stderr, "FATAL(%s|%s:%d): memory allocation error\n", __FILE__, __FUNCTION__, __LINE__); return 1;}
 
 typedef struct {
      char *infq1;
@@ -326,7 +326,7 @@ int parse_args(args_t *args, int argc, char *argv[])
      
      if (arg_nullcheck(argtable)) {
           LOG_ERROR("%s\n", "insufficient memory for argtable allocation.");
-          return -1;
+          return 1;
      }
 
      nerrors = arg_parse(argc, argv, argtable);
@@ -340,14 +340,14 @@ int parse_args(args_t *args, int argc, char *argv[])
           arg_print_syntax(stderr, argtable, "\n");
           arg_print_glossary(stderr, argtable, "  %-25s %s\n");
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-          exit(0);
+          exit(EXIT_SUCCESS);
      }
      
      if (nerrors > 0) {
           arg_print_errors(stdout, opt_end, PACKAGE_NAME);
           fprintf(stderr, "For more help try: %s -h or --help\n", PACKAGE_NAME);
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-          return -1;
+          return 1;
      }
      
 
@@ -360,7 +360,7 @@ int parse_args(args_t *args, int argc, char *argv[])
      if (args->overwrite_output && args->append_to_output) {
           LOG_ERROR("%s\n", "Can't append and overwrite at the same time");
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-          return -1;
+          return 1;
      }
      if (opt_quiet->count) {
           verbose = 0;
@@ -375,7 +375,7 @@ int parse_args(args_t *args, int argc, char *argv[])
      if (0 != strncmp(args->infq1, "-", 1) && ! file_exists(args->infq1)) {
           LOG_ERROR("File %s does not exist\n", args->infq1);
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-          return -1;
+          return 1;
      }
 
      args->outfq1 = strdup(opt_outfq1->filename[0]);
@@ -384,19 +384,19 @@ int parse_args(args_t *args, int argc, char *argv[])
           if (0 == strcmp(args->infq2, args->infq1)) {
                LOG_ERROR("%s\n", "The two input FastQ files are the same file");
                arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-               return -1;              
+               return 1;              
           }
 
           if (! file_exists(args->infq2)) {
                LOG_ERROR("File %s does not exist\n", args->infq2);
                arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-               return -1;
+               return 1;
           }
           
           if (! opt_outfq2->count) {
                LOG_ERROR("%s\n", "Need two output files for paired-end input");
                arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-               return -1;                        
+               return 1;                        
           }
 
           args->outfq2 = strdup(opt_outfq2->filename[0]);
@@ -405,7 +405,7 @@ int parse_args(args_t *args, int argc, char *argv[])
           if (opt_outfq2->count) {
                LOG_ERROR("%s\n", "Got second output file, not a corresponding second input file");
                arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-               return -1;              
+               return 1;              
           }
      }
 
@@ -413,21 +413,21 @@ int parse_args(args_t *args, int argc, char *argv[])
      if (args->min5pqual<0) {
           LOG_ERROR("Invalid 5' quality '%d'\n", args->min5pqual);          
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-          return -1;            
+          return 1;            
      }
 
      args->min3pqual = opt_min3pqual->ival[0];
      if (args->min3pqual<0) {
           LOG_ERROR("Invalid 3' quality '%d'\n", args->min3pqual);          
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-          return -1;            
+          return 1;            
      }
 
      args->phredoffset = opt_phredoffset->ival[0];
      if (33 != args->phredoffset && 64 != args->phredoffset) {
           LOG_ERROR("Invalid Phred-quality ASCII offset '%d'\n", args->phredoffset);
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-          return -1;            
+          return 1;            
      }
 
      
@@ -436,7 +436,7 @@ int parse_args(args_t *args, int argc, char *argv[])
      if (args->minreadlen<0) {
           LOG_ERROR("Invalid length '%d'\n", args->minreadlen);          
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-          return -1;            
+          return 1;            
      }
 #endif
 
@@ -445,7 +445,7 @@ int parse_args(args_t *args, int argc, char *argv[])
      if (args->sampling<0) {
           LOG_ERROR("Invalid sampling setting '%d'\n", args->sampling);          
           arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
-          return -1;            
+          return 1;            
      }
 #endif
 
@@ -454,13 +454,13 @@ int parse_args(args_t *args, int argc, char *argv[])
           if (1 != template_mark_counts(args->outfq1)) {
                LOG_ERROR("Need %s exactly once as number template in output filename for requested splitting\n", TEMPLATE_MARK);
                arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));               
-               return -1;
+               return 1;
           }
           if (args->outfq2) {
                if (1 != template_mark_counts(args->outfq2)) {
                     LOG_ERROR("Need %s as number template in output filename for requested splitting\n", TEMPLATE_MARK);
                     arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));               
-                    return -1;
+                    return 1;
                }
           }
      }
@@ -479,7 +479,7 @@ void dump_trim_pos(const trim_pos_t *tp)
 }
 
 
-/* returns -1 if read is to be discarded, in which case trim_pos
+/* returns 1 if read is to be discarded, in which case trim_pos
  * values might be set to arbitrary values. otherwise trim_pos will
  * hold valid (zero-offset) trimming positions.
  */
@@ -503,7 +503,7 @@ int calc_trim_pos(trim_pos_t *trim_pos,
 
      if (minreadlen > seq->qual.l) {
           LOG_DEBUG("%s\n", "Input read already smaller than minreadlen");
-          return -1;
+          return 1;
      }
 
      /* 3p end. test first, since more likely to be used by user
@@ -521,7 +521,7 @@ int calc_trim_pos(trim_pos_t *trim_pos,
           }
           if (trim_pos->pos3p == -1) {
                if (trace) {LOG_DEBUG("%s\n", "trim_pos->pos3p == -1");}
-               return -1;
+               return 1;
           }
      } else {
           trim_pos->pos3p = seq->qual.l-1; /* zero offset */
@@ -543,7 +543,7 @@ int calc_trim_pos(trim_pos_t *trim_pos,
           }
           if (trim_pos->pos5p == -1) {
                if (trace) {LOG_DEBUG("%s\n", "trim_pos->pos5p == -1");}
-               return -1;
+               return 1;
           }
      } else {
           trim_pos->pos5p = 0;
@@ -553,7 +553,7 @@ int calc_trim_pos(trim_pos_t *trim_pos,
       * correctly */
      if (trim_pos->pos3p - trim_pos->pos5p + 1 < minreadlen) {
           if (trace) {LOG_DEBUG("%s\n", "trim_pos->pos3p - trim_pos->pos5p + 1 < minreadlen");}
-          return -1;
+          return 1;
      }
           
      /*LOG_DEBUG("Returning trim_pos->pos3p = %d  trim_pos->pos5p = %d\n", trim_pos->pos3p,  trim_pos->pos5p);*/
@@ -761,87 +761,99 @@ int test()
      trim_args.min3pqual = 39;
      trim_args.minreadlen = 6;
 
-     if (-1 == calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("%s\n", "Read was discarded even though it's okay");
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
 
      sprintf_fastq(&buf, ks, NULL);
      free(buf);
      if (ks->seq.l != orig_read_len || strlen(ks->seq.s) != orig_read_len) {
           LOG_ERROR("%s\n", "Read trimming changed read seq");
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
 
      if (ks->qual.l != ks->seq.l || strlen(ks->qual.s) != orig_read_len) {
           LOG_ERROR("%s\n", "Read trimming changed read qual");
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
 
      trim_args.minreadlen = 7;
-     if (-1 != calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (! calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("Read should have been discarded but is not. Got trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
      
      trim_args.min5pqual = 40;
      trim_args.min3pqual = 0;
      trim_args.minreadlen = 1;
-     if (-1 != calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (! calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("Read should have been discarded but is not. Got trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
 
      trim_args.min5pqual = 0;
      trim_args.min3pqual = 40;
      trim_args.minreadlen = 1;
-     if (-1 != calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (! calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("Read should have been discarded but is not. Got trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
 
      trim_args.min5pqual = 0;
      trim_args.min3pqual = 0;
      trim_args.minreadlen = 100;
-     if (-1 != calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (! calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("Read should have been discarded but is not. Got trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
 
      trim_args.min5pqual = 0;
      trim_args.min3pqual = 0;
      trim_args.minreadlen = 1;
-     if (-1 == calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("%s\n", "Read was discarded even though it's okay");
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
 
      strcpy(ks->qual.s, "???????????????????????????????????????????????????A");
      trim_args.min5pqual = 31;
      trim_args.min3pqual = 2;
      trim_args.minreadlen = 2;
-     if (-1 != calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (! calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("Read should have been discarded but is not. Got trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
      trim_args.minreadlen = 1;
-     if (-1 == calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("%s\n", "Read was discarded even though it's okay");
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
 
      strcpy(ks->qual.s, "A????????????????????????????????????????????????????");
      trim_args.min5pqual = 2;
      trim_args.min3pqual = 31;
      trim_args.minreadlen = 2;
-     if (-1 != calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (! calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("Read should have been discarded but is not. Got trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
      trim_args.minreadlen = 1;
-     if (-1 == calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("%s\n", "Read was discarded even though it's okay");
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
 
 
@@ -849,53 +861,61 @@ int test()
      ks->seq.l = strlen(ks->seq.s);
      strcpy(ks->qual.s, "5678"); /* Q = 20 21 22 23 */
      ks->qual.l = strlen(ks->qual.s);
-     orig_read_len = strlen(ks->seq.s);
+     /*orig_read_len = strlen(ks->seq.s);*/
      trim_args.min5pqual = 24;
      trim_args.min3pqual = 0;
      trim_args.minreadlen = -1;
-     if (-1 != calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (! calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("Read should have been discarded but is not. Got trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
      trim_args.min5pqual = 0;
      trim_args.min3pqual = 24;
      trim_args.minreadlen = -1;
-     if (-1 != calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (! calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("Read should have been discarded but is not. Got trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
      trim_args.min5pqual = 23;
      trim_args.min3pqual = 23;
      trim_args.minreadlen = -1;
-     if (-1 == calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("%s\n", "Read was discarded even though it's okay");
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
      if (trim_pos.pos5p!=3 || trim_pos.pos3p!=3) {
           LOG_ERROR("Got wrong trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
      trim_args.min5pqual = 23;
      trim_args.min3pqual = 0;
      trim_args.minreadlen = 1;
-     if (-1 == calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("%s\n", "Read was discarded even though it's okay");
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
      if (trim_pos.pos5p!=3 || trim_pos.pos3p!=3) {
           LOG_ERROR("Got wrong trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
      trim_args.min5pqual = 0;
      trim_args.min3pqual = 23;
      trim_args.minreadlen = 1;
-     if (-1 == calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_ERROR("%s\n", "Read was discarded even though it's okay");
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
      if (trim_pos.pos5p!=0 || trim_pos.pos3p!=3) {
           LOG_ERROR("Got wrong trim_pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
-          return EXIT_FAILURE;
+          kseq_destroy(ks);
+          return 1;
      }
 
 
@@ -932,7 +952,7 @@ int test()
 
      LOG_WARN("Getting trim pos for read (len=%d) with min5pqual=%d min3pqual=%d minreadlen=%d\n",
               ks->seq.l, trim_args.min5pqual, trim_args.min3pqual, trim_args.minreadlen);
-     if (-1 == calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
+     if (calc_trim_pos(&trim_pos, ks, phredoffset, &trim_args)) {
           LOG_WARN("%s\n", "Read is to be discarded");
      } else {
           fprintf(stderr, "Got trim pos %d %d\n", trim_pos.pos5p, trim_pos.pos3p);
@@ -1000,7 +1020,7 @@ int replace_template_mark_with_no(char *in, char **out, int split_no) {
 
 int open_output_one(gzFile *fp_outfq, char *outfq, 
                     int append, int overwrite, int split_no) {
-     char *fname;
+     char *fname = NULL;
      char outmode[2];/* output mode for both fq files */
      strcpy(outmode, "w");
      if (append) {
@@ -1033,18 +1053,17 @@ int open_output_one(gzFile *fp_outfq, char *outfq,
                }
           }
           
-          (*fp_outfq) = gzopen(fname, outmode);
-          
-          if (fname != outfq) {
-               free(fname);
-          }
-          
+          (*fp_outfq) = gzopen(fname, outmode);                    
      }
 
      if (NULL == (*fp_outfq)) {
           LOG_ERROR("Couldn't open %s\n", fname);
           return 1;
      }
+     if (fname != outfq) {
+          free(fname);
+     }
+
      return 0;
 }
 
@@ -1107,9 +1126,6 @@ int main(int argc, char *argv[])
     trim_args.min5pqual = args.min5pqual;
     trim_args.min3pqual = args.min3pqual;;
     trim_args.minreadlen = args.minreadlen;
-    if (args.split_every) {
-         split_no = 1;
-    }
     if (args.infq2) {
          pe_mode = 1;
     }
@@ -1179,7 +1195,7 @@ int main(int argc, char *argv[])
               }
          }
 
-         if (! args.no_filter && -1 == calc_trim_pos(
+         if (! args.no_filter && calc_trim_pos(
                   trim_pos_1, seq1, args.phredoffset, &trim_args)) {
               if (trace) {LOG_DEBUG("%s\n", "seq1 to be discarded");}
               free(trim_pos_1); free(trim_pos_2);
@@ -1198,7 +1214,7 @@ int main(int argc, char *argv[])
                    }
               }
 
-              if (! args.no_filter && -1 == calc_trim_pos(
+              if (! args.no_filter && calc_trim_pos(
                        trim_pos_2, seq2, args.phredoffset, &trim_args)) {
                    if (trace) {LOG_DEBUG("%s\n", "seq2 to be discarded");}
                    free(trim_pos_1); free(trim_pos_2);
@@ -1265,6 +1281,7 @@ int main(int argc, char *argv[])
                               args.append_to_output, args.overwrite_output, split_no)) {
                    LOG_ERROR("%s\n", "Couldn't open output files. Exiting...");
                    free_args(& args);
+                   kseq_destroy(seq1);
                    return EXIT_FAILURE;
               }
          }
