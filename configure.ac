@@ -1,4 +1,4 @@
-AC_INIT([famas], [0.0.8], [andreas.wilm@gmail.com])
+AC_INIT([famas], [0.0.9a], [andreas.wilm@gmail.com])
 
 # The AC_INIT macro can take any source file as an argument. It just
 # checks that the file is there, which should, in turn, mean that the
