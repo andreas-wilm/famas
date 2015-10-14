@@ -57,7 +57,7 @@ KSEQ_INIT(gzFile, gzread)
 #define DEFAULT_PHREDOFFSET 33
 #endif
 #ifndef PAIRED_ORDER_SAMPLERATE
-#define PAIRED_ORDER_SAMPLERATE 1000
+#define PAIRED_ORDER_SAMPLERATE 10000
 #endif
 #ifndef QUAL_CHECK_SAMPLERATE
 #define QUAL_CHECK_SAMPLERATE 1000
@@ -648,8 +648,7 @@ int gzprintf_fastq(gzFile fp, const kseq_t *seq, const trim_pos_t *trim_pos) {
  }
 
 
-/* returns 0 are not paired, 1 if reads are paired and -1 if order
- * couldn't be derived.
+/* returns 0 if not paired, 1 if reads are paired
  */
 int reads_are_paired(const kseq_t *seq1, const kseq_t *seq2) {
      /* Either read names end in '/[12]$' (older illumina/casava) or
@@ -670,29 +669,20 @@ int reads_are_paired(const kseq_t *seq1, const kseq_t *seq2) {
       *
       */
      if (seq1->name.l != seq2->name.l) {
-          return -1;
+          return 0;
      }
-     /* if we have a comment we, assume seq put the last bit into
-      * comment. otherwise we assume old illumina/casava with name ~
-      * '/[12]$' */
+     /* if we have a comment we assume seq put the last bit into
+      * comment. otherwise we assume old illumina/casava with name
+      * which endswith '/[12]$' */
      if (seq1->comment.l && seq2->comment.l) {
-          if (0 == strcmp(seq1->name.s, seq2->name.s)) {
-               return 1;
-          } else {
-               return 0;
-          }
+          return ! strcmp(seq1->name.s, seq2->name.s);
 
      } else {
           if (seq1->name.l < 3) {
-               return -1;
-          }
-          /* ignore the '/[12]$' bit for comparison */
-          if (0 == strncmp(seq1->name.s, seq2->name.s, seq1->name.l-2)) {
-               return 1;
-          } else {
                return 0;
           }
-          
+          /* ignore the '/[12]$' bit for comparison */
+          return ! strncmp(seq1->name.s, seq2->name.s, seq1->name.l-2);
      }
 
 #if 0     
@@ -1124,7 +1114,7 @@ int main(int argc, char *argv[])
          dump_args(& args);
     }
     trim_args.min5pqual = args.min5pqual;
-    trim_args.min3pqual = args.min3pqual;;
+    trim_args.min3pqual = args.min3pqual;
     trim_args.minreadlen = args.minreadlen;
     if (args.infq2) {
          pe_mode = 1;
