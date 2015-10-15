@@ -1,0 +1,4 @@
+checkerdir=/Users/wilma/local/src//checker-276/
+scanview=$checkerdir/scan-view 
+scanbuild=$checkerdir/scan-build
+$scanbuild make || echo "Use $scanview"
