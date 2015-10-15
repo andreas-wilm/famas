@@ -18,11 +18,11 @@
 
 # autotools stuff
 Makefile
-Makefile.in
+#Makefile.in
 aclocal.m4
 config.log
 config.status
-configure
+#configure
 depcomp
 install-sh
 missing
