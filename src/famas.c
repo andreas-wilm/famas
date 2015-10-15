@@ -1097,6 +1097,8 @@ int main(int argc, char *argv[])
     int rc;
     int read_order_warning_issued = 0;
     int split_no = 0;
+    trim_pos_t *trim_pos_1 = NULL;
+    trim_pos_t *trim_pos_2 = NULL;
 
 
 
@@ -1143,9 +1145,11 @@ int main(int argc, char *argv[])
          seq2 = kseq_init(fp_infq2);
     }
     n_reads_in = n_reads_out = 0;
+    if (! args.no_filter) {
+         trim_pos_1 = malloc(sizeof(trim_pos_t));
+         trim_pos_2 = malloc(sizeof(trim_pos_t));
+    }
 	while ((len1 = kseq_read(seq1)) >= 0) {
-         trim_pos_t *trim_pos_1 = NULL;
-         trim_pos_t *trim_pos_2 = NULL;
          if (trace) {LOG_DEBUG("Inspecting seq1: %s\n", seq1->name.s);}
 
          if (pe_mode) {
@@ -1167,9 +1171,7 @@ int main(int argc, char *argv[])
          }
 
          if (! args.no_filter) {
-              trim_pos_1 = malloc(sizeof(trim_pos_t));
               trim_pos_1->pos5p = trim_pos_1->pos3p = 1<<20; /* make invalid */
-              trim_pos_2 = malloc(sizeof(trim_pos_t));
               trim_pos_2->pos5p = trim_pos_2->pos3p = 1<<20; /* make invalid */
          }
 
@@ -1180,7 +1182,6 @@ int main(int argc, char *argv[])
                    LOG_ERROR("Read %s has qualities outside valid range (%s). %s\n",
                              seq1->name.s, seq1->qual.s, EARLY_EXIT_MESSAGE);
                    rc = EXIT_FAILURE;
-                   free(trim_pos_1); free(trim_pos_2);
                    goto free_and_exit;
               }
          }
@@ -1188,7 +1189,6 @@ int main(int argc, char *argv[])
          if (! args.no_filter && calc_trim_pos(
                   trim_pos_1, seq1, args.phredoffset, &trim_args)) {
               if (trace) {LOG_DEBUG("%s\n", "seq1 to be discarded");}
-              free(trim_pos_1); free(trim_pos_2);
               continue;
          }
 
@@ -1199,7 +1199,6 @@ int main(int argc, char *argv[])
                         LOG_ERROR("Read %s has qualities outside valid range (%s). %s\n",
                                   seq1->name.s, seq1->qual.s, EARLY_EXIT_MESSAGE);
                         rc = EXIT_FAILURE;
-                        free(trim_pos_1); free(trim_pos_2);
                         goto free_and_exit;
                    }
               }
@@ -1207,7 +1206,6 @@ int main(int argc, char *argv[])
               if (! args.no_filter && calc_trim_pos(
                        trim_pos_2, seq2, args.phredoffset, &trim_args)) {
                    if (trace) {LOG_DEBUG("%s\n", "seq2 to be discarded");}
-                   free(trim_pos_1); free(trim_pos_2);
                    continue;
               }
               
@@ -1222,7 +1220,6 @@ int main(int argc, char *argv[])
                                        " Checked reads names were %s and %s. %s\n",
                                        seq1->name.s, seq2->name.s, EARLY_EXIT_MESSAGE);
                              rc = EXIT_FAILURE;
-                             free(trim_pos_1); free(trim_pos_2);
                              goto free_and_exit;
            
                         } else if (-1 == rc) {
@@ -1241,7 +1238,6 @@ int main(int argc, char *argv[])
               /* random int ranging from 1 to args.sampling */
               int r = rand()%args.sampling+1; 
               if (r != args.sampling) {
-                   free(trim_pos_1); free(trim_pos_2);
                    continue;
               }
          }
@@ -1281,7 +1277,6 @@ int main(int argc, char *argv[])
                         "  %d reads). Exiting...\n",
                         args.outfq1, n_reads_out);
               rc = EXIT_FAILURE;
-              free(trim_pos_1); free(trim_pos_2);
               goto free_and_exit;
          }
 
@@ -1291,7 +1286,6 @@ int main(int argc, char *argv[])
                         args.outfq2, n_reads_out,
                         EARLY_EXIT_MESSAGE);
               rc = EXIT_FAILURE;
-              free(trim_pos_1); free(trim_pos_2);
               goto free_and_exit;
          }
 
@@ -1312,10 +1306,11 @@ int main(int argc, char *argv[])
     rc = EXIT_SUCCESS;
 
 free_and_exit:
+    free(trim_pos_1);
+    free(trim_pos_2);
 
     LOG_INFO("%d %s in. %d %s out\n", n_reads_in, pe_mode?"pairs":"reads", 
              n_reads_out, pe_mode?"pairs":"reads");
-
 	kseq_destroy(seq1);
 	gzclose(fp_infq1);
 	gzclose(fp_outfq1);
@@ -1326,5 +1321,6 @@ free_and_exit:
     }
     free_args(& args);
 
+    /* fclose(stdout); fclose(stderr); */
     return rc;
 }
