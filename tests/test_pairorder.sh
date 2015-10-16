@@ -6,7 +6,7 @@
 source lib.sh || exit 1
 
 
-DEBUG=1
+DEBUG=0
 f1=../data/SRR499813_1.Q2-and-N.fail_order_check.fastq.gz
 f2=../data/SRR499813_2.Q2-and-N.fail_order_check.fastq.gz
 odir=$(mktemp -d -t $0.sh) || exit 1

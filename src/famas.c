@@ -39,6 +39,11 @@
 
 KSEQ_INIT(gzFile, gzread)
 
+/* http://stackoverflow.com/questions/3437404/min-and-max-in-c */
+#define max(a,b) \
+   ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a > _b ? _a : _b; })
 
 /* defaults:
  * most can be overwritten during compile time, e.g.
@@ -88,7 +93,7 @@ typedef struct {
      int minreadlen;
 
      int sampling;
-     int split_every;
+     int split_into;
 
      int no_order_check;
      int no_qual_check;
@@ -182,7 +187,7 @@ void dump_args(const args_t *args)
      LOG_DEBUG("  minreadlen         = %d\n", args->minreadlen);
 
      LOG_DEBUG("  sampling           = %d\n", args->sampling);
-     LOG_DEBUG("  split_every        = %d\n", args->split_every);
+     LOG_DEBUG("  split_into        = %d\n", args->split_into);
 
      LOG_DEBUG("  no_order_check     = %d\n", args->no_order_check);
      LOG_DEBUG("  no_qual_check      = %d\n", args->no_qual_check);
@@ -279,9 +284,9 @@ int parse_args(args_t *args, int argc, char *argv[])
      struct arg_int *opt_sampling = arg_int0(
           "s", "sampling", "<int>",
           "Randomly sample roughly every <int>th read (after filtering, if used)");
-     struct arg_int *opt_split_every = arg_int0(
-          "x", "split-every", "<int>",
-          "Create new output after every <int'th> read. Requires " XSTR(TEMPLATE_MARK) " in output names, which will be replaced with split number");
+     struct arg_int *opt_split_into = arg_int0(
+          "x", "split-into", "<int>",
+          "Split into this many new files. Requires " XSTR(TEMPLATE_MARK) " in output names, which will be replaced with split number");
 
      struct arg_rem  *rem_checks  = arg_rem(NULL, "\nChecks:");
      struct arg_lit *opt_no_order_check  = arg_lit0(
@@ -319,7 +324,7 @@ int parse_args(args_t *args, int argc, char *argv[])
 
      void *argtable[] = {rem_files, opt_infq1, opt_infq2, opt_outfq1, opt_outfq2,
                          rem_filtering, opt_no_filter, opt_min5pqual, opt_min3pqual, opt_minreadlen, opt_phredoffset, 
-                         rem_sampling, opt_sampling, opt_split_every,
+                         rem_sampling, opt_sampling, opt_split_into,
                          rem_checks, opt_no_order_check, opt_no_qual_check, 
                          rem_misc, opt_overwrite_output, opt_append_to_output, opt_help, opt_quiet, opt_debug,
                          opt_end};    
@@ -449,8 +454,8 @@ int parse_args(args_t *args, int argc, char *argv[])
      }
 #endif
 
-     args->split_every = opt_split_every->ival[0];
-     if (args->split_every>0) {
+     args->split_into = opt_split_into->ival[0];
+     if (args->split_into>0) {
           if (1 != template_mark_counts(args->outfq1)) {
                LOG_ERROR("Need %s exactly once as number template in output filename for requested splitting\n", TEMPLATE_MARK);
                arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));               
@@ -1044,6 +1049,7 @@ int open_output_one(gzFile *fp_outfq, char *outfq,
           }
           
           (*fp_outfq) = gzopen(fname, outmode);                    
+          /*LOG_WARN("opening fname=%s for split_no=%d\n", fname, split_no);*/
      }
 
      if (NULL == (*fp_outfq)) {
@@ -1088,6 +1094,7 @@ int main(int argc, char *argv[])
 {
     args_t args = { 0 };
     gzFile fp_infq1 = NULL, fp_infq2 = NULL;
+    gzFile *fp_outfq1_array = NULL, *fp_outfq2_array = NULL;
     gzFile fp_outfq1 = NULL, fp_outfq2 = NULL;
     kseq_t *seq1 = NULL, *seq2 = NULL;
     int len1 = -1, len2 = -1;
@@ -1099,9 +1106,8 @@ int main(int argc, char *argv[])
     int split_no = 0;
     trim_pos_t *trim_pos_1 = NULL;
     trim_pos_t *trim_pos_2 = NULL;
-
-
-
+    int i;
+    
 #ifdef TEST
     return test();
 #endif
@@ -1131,12 +1137,37 @@ int main(int argc, char *argv[])
          free_args(& args);
          return EXIT_FAILURE;
     }
-	if (args.infq2) {
+	if (pe_mode) {
          fp_infq2 = gzopen(args.infq2, "r");
          if (NULL == fp_infq2) {
               LOG_ERROR("%s\n", "Couldn't open %s. Exiting...", args.infq2);
               free_args(& args);
               return EXIT_FAILURE;
+         }
+    }
+
+
+    fp_outfq1_array = calloc(max(args.split_into, 1), sizeof(gzFile));
+    if (pe_mode) {
+         fp_outfq2_array = calloc(max(args.split_into, 1), sizeof(gzFile));
+    }
+    for (i=0; i<max(args.split_into, 1); i++) {
+         if (args.split_into==0) {
+              split_no = 0;
+         } else {
+              split_no = i+1;
+         }
+         if (open_output(&fp_outfq1, &fp_outfq2,
+                         args.outfq1, args.outfq2,
+                         args.append_to_output, args.overwrite_output, split_no)) {
+                   LOG_ERROR("%s\n", "Couldn't open output files. Exiting...");
+                   free_args(& args);
+                   kseq_destroy(seq1);
+                   return EXIT_FAILURE;
+         }         
+         fp_outfq1_array[i] = fp_outfq1;
+         if (pe_mode) {
+              fp_outfq2_array[i] = fp_outfq2;
          }
     }
 
@@ -1248,29 +1279,12 @@ int main(int argc, char *argv[])
           *
           */
 
-         if (n_reads_out==0 || (args.split_every && (n_reads_out % args.split_every == 0))) {
-              if (args.split_every==0) {
-                   split_no = 0;
-              } else {
-                   split_no = n_reads_out / args.split_every + 1;
-              }
-
-              if (fp_outfq1) {
-                   gzclose(fp_outfq1);
-              }
-              if (fp_outfq2) {
-                   gzclose(fp_outfq2);
-              }
-
-              if (open_output(&fp_outfq1, &fp_outfq2, 
-                              args.outfq1, args.outfq2, 
-                              args.append_to_output, args.overwrite_output, split_no)) {
-                   LOG_ERROR("%s\n", "Couldn't open output files. Exiting...");
-                   free_args(& args);
-                   kseq_destroy(seq1);
-                   return EXIT_FAILURE;
-              }
+         if (args.split_into==0) {
+              split_no = 0;
+         } else {
+              split_no = n_reads_out % args.split_into;
          }
+         fp_outfq1 = fp_outfq1_array[split_no];
 
          if (0 >= gzprintf_fastq(fp_outfq1, seq1, trim_pos_1)) {
               LOG_ERROR("Couldn't write to %s (after successfully writing"
@@ -1280,13 +1294,16 @@ int main(int argc, char *argv[])
               goto free_and_exit;
          }
 
-         if (pe_mode && 0 >= gzprintf_fastq(fp_outfq2, seq2, trim_pos_2)) {
-              LOG_ERROR("Couldn't write to %s (after successfully"
-                        " writing %d reads). %s\n",
-                        args.outfq2, n_reads_out,
-                        EARLY_EXIT_MESSAGE);
-              rc = EXIT_FAILURE;
-              goto free_and_exit;
+         if (pe_mode) {
+              fp_outfq2 = fp_outfq2_array[split_no];
+              if (0 >= gzprintf_fastq(fp_outfq2, seq2, trim_pos_2)) {
+                   LOG_ERROR("Couldn't write to %s (after successfully"
+                             " writing %d reads). %s\n",
+                             args.outfq2, n_reads_out,
+                             EARLY_EXIT_MESSAGE);
+                   rc = EXIT_FAILURE;
+                   goto free_and_exit;
+              }
          }
 
          n_reads_out+=1;
@@ -1311,13 +1328,21 @@ free_and_exit:
 
     LOG_INFO("%d %s in. %d %s out\n", n_reads_in, pe_mode?"pairs":"reads", 
              n_reads_out, pe_mode?"pairs":"reads");
+
 	kseq_destroy(seq1);
-	gzclose(fp_infq1);
-	gzclose(fp_outfq1);
+    gzclose(fp_infq1);
+    for (i=0; i<max(args.split_into, 1); i++) {
+         gzclose(fp_outfq1_array[i]);
+    }
+    free(fp_outfq1_array);
+
     if (pe_mode) {
          kseq_destroy(seq2);
          gzclose(fp_infq2);
-         gzclose(fp_outfq2);
+         for (i=0; i<max(args.split_into, 1); i++) {
+              gzclose(fp_outfq2_array[i]);
+         }
+         free(fp_outfq2_array);
     }
     free_args(& args);
 

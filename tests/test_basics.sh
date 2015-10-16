@@ -24,6 +24,14 @@ fi
 step=1
 #echodebug "step $step done"; let step=step+1
 
+md5_i=$(gzip -dc $i | $md5)
+md5_o=$(gzip -dc $o | $md5)
+if [ $md5_i != $md5_o ]; then
+    echoerror "Content changed even through we used no filter: compare $i and $o (command was $cmd)"
+    exit 1
+fi
+
+
 
 stage="overwrite disabled"
 cmd="$famas -i $i -o $o --quiet --no-filter"
@@ -84,8 +92,10 @@ if ! eval $cmd 2>log.txt; then
     echoerror "The following command failed: $cmd"
     exit 1
 fi
-if [ -s $o ] || [ -s $p ] ; then
-    echoerror "Q was set high so both of the following should be zero bytes: $o and $p"
+numl_o=$(gzip -dc $o | wc -l)
+numl_p=$(gzip -dc $p | wc -l)
+if [ $numl_o != 0 ] || [ $numl_p != 0 ] ; then
+    echoerror "Q was set high so both of the following should contain no reads: $o and $p"
     echoerror "command was $cmd"
     exit 1
 fi
@@ -97,7 +107,9 @@ if ! eval $cmd 2>log.txt; then
     echoerror "The following command failed: $cmd"
     exit 1
 fi
-if [ -s $o ] || [ -s $p ] ; then
+numl_o=$(gzip -dc $o | wc -l)
+numl_p=$(gzip -dc $p | wc -l)
+if [ $numl_o != 0 ] || [ $numl_p != 0 ] ; then
     echoerror "q was set high so both of the following should be zero bytes: $o and $p"
     exit 1
 fi
@@ -109,7 +121,9 @@ if ! eval $cmd 2>log.txt; then
     echoerror "The following command failed: $cmd"
     exit 1
 fi
-if [ -s $o ] || [ -s $p ] ; then
+numl_o=$(gzip -dc $o | wc -l)
+numl_p=$(gzip -dc $p | wc -l)
+if [ $numl_o != 0 ] || [ $numl_p != 0 ] ; then
     echoerror "l was set high so both of the following should be zero bytes: $o and $p"
     exit 1
 fi

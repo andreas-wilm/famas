@@ -36,3 +36,6 @@ tmp/
 
 # data
 data/*fastq.gz
+
+# misc
+src/famas.dSYM/

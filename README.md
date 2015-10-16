@@ -56,7 +56,7 @@ Usage
 
 famas -h will produce the following help:
 
-    famas (0.0.8a) - yet another program for FAstq MASsaging
+    famas (0.0.9a) - yet another program for FAstq MASsaging
     
     Usage: famas [-fah] -i <file> [-j <file>] -o <file> [-p <file>] [--no-filter] [-Q <int>] [-q <int>] [-l <int>] [-e <33|64>] [-s <int>] [-x <int>] [--no-order-check] [--no-qual-check] [--quiet] [--debug]
     
@@ -75,10 +75,10 @@ famas -h will produce the following help:
     
     Sampling:
       -s, --sampling=<int>      Randomly sample roughly every <int>th read (after filtering, if used)
-      -x, --split-every=<int>   Create new output after every <int'th> read. Requires "XXXXXX" in output names, which will be replaced with split number
+      -x, --split-into=<int>    Split into this many new files. Requires "XXXXXX" in output names, which will be replaced with split number
     
     Checks:
-      --no-order-check          Don't check paired-end read order (otherwise checked every 1000 reads)
+      --no-order-check          Don't check paired-end read order (otherwise checked every 10000 reads)
       --no-qual-check           Don't check quality range (otherwise checked every 1000 reads)
     
     Misc:

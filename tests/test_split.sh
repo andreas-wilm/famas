@@ -18,7 +18,7 @@ oext=.fastq.gz
 odir=$(mktemp -d -t $0.sh) || exit 1
 o1=$odir/1.$oext
 o2=$odir/2.$oext
-cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every 10000 --quiet --no-filter"
+cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-into 10 --quiet --no-filter"
 if eval $cmd 2>/dev/null; then
     echoerror "The following command should have failed: $cmd"
     exit 1
@@ -29,7 +29,7 @@ fi
 #
 o1=$odir/1-XXXXXX-XXXXXX$oext
 o2=$odir/2-XXXXXX-XXXXXX$oext
-cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every 10000 --quiet --no-filter"
+cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-into 10 --quiet --no-filter"
 if eval $cmd 2>/dev/null; then
     echoerror "The following command should have failed: $cmd"
     exit 1
@@ -44,7 +44,8 @@ odir=$(mktemp -d -t $0.sh) || exit 1
 o1=$odir/1-XXXXXX$oext
 o2=$odir/2-XXXXXX$oext
 #echodebug "odir=$odir o1=$o1 o2=$o2"
-cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every 10000 --quiet --no-filter"
+num_splits=10
+cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-into $num_splits --quiet --no-filter"
 if ! eval $cmd; then
     echoerror "The following command failed: $cmd"
     exit 1
@@ -52,20 +53,17 @@ fi
 
 # check number of splits
 num_out=$(ls $odir/*$oext | wc -l) 
-if [ $num_out -le 2 ]; then
+if [ $num_out -le $num_splits ]; then
     echoerror "Split unsuccessful: got $num_out files only"
     exit 1
 fi
 
 
-# FIXME check no files has more than split-every reads
-
-
 # check content
-f1md5=$(gzip -dc $f1 | $md5)
-f2md5=$(gzip -dc $f2 | $md5)
-o1md5=$(gzip -dc $(ls $(echo $o1 | sed -e 's,XXXXXX,*,') | sort) | $md5) || exit 1
-o2md5=$(gzip -dc $(ls $(echo $o2 | sed -e 's,XXXXXX,*,') | sort) | $md5) || exit 1
+f1md5=$(gzip -dc $f1 | sort | $md5)
+f2md5=$(gzip -dc $f2 | sort | $md5)
+o1md5=$(gzip -dc $(ls $(echo $o1 | sed -e 's,XXXXXX,*,')) | sort | $md5) || exit 1
+o2md5=$(gzip -dc $(ls $(echo $o2 | sed -e 's,XXXXXX,*,')) | sort | $md5) || exit 1
 if [ $f1md5 != $o1md5 ]; then
     echoerror "Content changed while splitting first file: compare $f1 and $o1"
     exit 1

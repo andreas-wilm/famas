@@ -9,3 +9,4 @@ for f in $(ls test*sh); do
 		echo "FAILED. See log.txt" | tee -a log.txt;
 	fi
 done
+echo "See also scan.README"
