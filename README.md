@@ -36,9 +36,9 @@ you might want to use:
     ./configure CFLAGS='-I/opt/local/include'  LDFLAGS='-L/opt/local/lib'
 
 
-Note: If you clone the git repository instead of downloading the
-package, you will first have to run the following (just once) to set
-up the autotools files (configure and Makefile.ins).
+Note for developers: if you make changes to configure.in or
+Makefile.am, you have to run the following to update the autotools
+files (configure and Makefile.ins).
 
     autoreconf
     automake --add-missing
