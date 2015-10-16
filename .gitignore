@@ -25,7 +25,7 @@ config.status
 #configure
 depcomp
 #install-sh
-missing
+#missing
 autom4te.cache
 
 # backups
