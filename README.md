@@ -15,11 +15,14 @@ Features:
 Installation
 ============
 
+
 Famas depends on [libz](http://www.zlib.net/) ,
 [argtable3](http://www.argtable.org) and
 [Heng Li's kseq](http://lh3lh3.users.sourceforge.net/kseq.shtml). The
 latter two come with the famas source and libz is very likely already
 installed in your system.
+
+Go the dist directory and download the latest tarball.
 
 Unpack the source and do the GNU triple jump:
 
@@ -36,9 +39,9 @@ you might want to use:
     ./configure CFLAGS='-I/opt/local/include'  LDFLAGS='-L/opt/local/lib'
 
 
-Note for developers: if you make changes to configure.in or
-Makefile.am, you have to run the following to update the autotools
-files (configure and Makefile.ins).
+Note, if you use the github source or github releases (and not the distribution tarball
+in the distribution directory), you might have to run the following
+once to update the autotools files (configure and Makefile.in):
 
     autoreconf
     automake --add-missing
