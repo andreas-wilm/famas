@@ -286,7 +286,7 @@ int parse_args(args_t *args, int argc, char *argv[])
           "Randomly sample roughly every <int>th read (after filtering, if used)");
      struct arg_int *opt_split_every = arg_int0(
           "x", "split-every", "<int>",
-          "Split every X reads. Requires " TEMPLATE_MARK " in output names, which will be replaced with split number (clashes with -x)");
+          "Split every x reads. Requires " TEMPLATE_MARK " in output names, which will be replaced with split number");
 
      struct arg_rem  *rem_checks  = arg_rem(NULL, "\nChecks:");
      struct arg_lit *opt_no_order_check = arg_lit0(

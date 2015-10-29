@@ -78,7 +78,7 @@ famas -h will produce the following help:
 
     Sampling:
       -s, --sampling=<int>      Randomly sample roughly every <int>th read (after filtering, if used)
-      -x, --split-every=<int>   Split every X reads. Requires XXXXXX in output names, which will be replaced with split number (clashes with -x)
+      -x, --split-every=<int>   Split every X reads. Requires XXXXXX in output names, which will be replaced with split number
 
     Checks:
       --no-order-check          Don't check paired-end read order (otherwise checked every 10000 reads)
