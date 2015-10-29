@@ -27,7 +27,8 @@ step=1
 md5_i=$(gzip -dc $i | $md5)
 md5_o=$(gzip -dc $o | $md5)
 if [ $md5_i != $md5_o ]; then
-    echoerror "Content changed even through we used no filter: compare $i and $o (command was $cmd)"
+    echoerror "Content changed even th
+rough we used no filter: compare $i and $o (command was $cmd)"
     exit 1
 fi
 
@@ -151,6 +152,31 @@ if [ $md5_j != $md5_p ]; then
     echoerror "Content changed while splitting second file: compare $j and $p"
     exit 1
 fi
+
+
+# default should leave no reads <minlen bp and no Q2 bases '#' at ends
+minlen=40
+cmd="$famas -i $i -j $j -o $o -p $p -l $minlen --quiet -q 3 -Q 3 --overwrite"
+if ! eval $cmd 2>log.txt; then
+    echoerror "The following command  failed: $cmd"
+    exit 1
+fi
+num_o_q2_e=$(gzip -dc $o | awk 'NR%4==0' | grep -c '#$')
+num_p_q2_e=$(gzip -dc $p | awk 'NR%4==0' | grep -c '#$')
+num_o_q2_s=$(gzip -dc $o | awk 'NR%4==0' | grep -c '^#')
+num_p_q2_s=$(gzip -dc $p | awk 'NR%4==0' | grep -c '^#')
+if [ $num_o_q2_s -gt 0 ] || [ $num_p_q2_s -gt 0 ] || [ $num_o_q2_e -gt 0 ] || [ $num_p_q2_e -gt 0 ]; then
+    echoerror "Found Q2 bases in $o or $p"
+    exit 1
+fi
+min_len_o=$(gzip -dc $o | awk '{if (NR%4==2) {print length($0)}}' | sort | head -n 1)
+min_len_p=$(gzip -dc $p | awk '{if (NR%4==2) {print length($0)}}' | sort | head -n 1)
+if [ $min_len_o -lt $minlen ] || [ $min_len_p -lt $minlen ]; then
+    echoerror "Found sequences <$minlen bp in $o or $p"
+    exit 1
+fi
+
+
 
 
 if [ $DEBUG -eq 1 ]; then
