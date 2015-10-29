@@ -21,10 +21,10 @@ valgrind_log=$odir/valgrind.log
 
 
 # as in split.sh but with filter and sampling
-cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-into 10 --sampling 10 --quiet"
+cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every 1000 --sampling 10 --quiet"
 dsym_arg="--dsymutil=yes "
-dsym_arg=""
-valgrind --log-file=$valgrind_log --leak-check=full --tool=memcheck $dsym_arg --show-leak-kinds=all  $cmd || exit 1
+#dsym_arg=""
+valgrind --log-file=$valgrind_log --track-origins=yes --leak-check=full --tool=memcheck $dsym_arg --show-leak-kinds=all  $cmd || exit 1
  
 
 num_err=$(grep 'ERROR SUMMARY' $valgrind_log | grep -cv ': 0 errors')

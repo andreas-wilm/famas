@@ -93,7 +93,7 @@ typedef struct {
      int minreadlen;
 
      int sampling;
-     int split_into;
+     int split_every;
 
      int no_order_check;
      int no_qual_check;
@@ -187,7 +187,7 @@ void dump_args(const args_t *args)
      LOG_DEBUG("  minreadlen         = %d\n", args->minreadlen);
 
      LOG_DEBUG("  sampling           = %d\n", args->sampling);
-     LOG_DEBUG("  split_into        = %d\n", args->split_into);
+     LOG_DEBUG("  split_every        = %d\n", args->split_every);
 
      LOG_DEBUG("  no_order_check     = %d\n", args->no_order_check);
      LOG_DEBUG("  no_qual_check      = %d\n", args->no_qual_check);
@@ -280,16 +280,16 @@ int parse_args(args_t *args, int argc, char *argv[])
           "Discard reads if read length is below this length (discard both reads if"
           " either is below this limit). Default: " XSTR(DEFAULT_MINREADLEN));
 
-     struct arg_rem *rem_sampling  = arg_rem(NULL, "\nSampling:");
+     struct arg_rem *rem_sampling = arg_rem(NULL, "\nSampling:");
      struct arg_int *opt_sampling = arg_int0(
           "s", "sampling", "<int>",
           "Randomly sample roughly every <int>th read (after filtering, if used)");
-     struct arg_int *opt_split_into = arg_int0(
-          "x", "split-into", "<int>",
-          "Split into this many new files. Requires " XSTR(TEMPLATE_MARK) " in output names, which will be replaced with split number");
+     struct arg_int *opt_split_every = arg_int0(
+          "x", "split-every", "<int>",
+          "Split every X reads. Requires " TEMPLATE_MARK " in output names, which will be replaced with split number (clashes with -x)");
 
      struct arg_rem  *rem_checks  = arg_rem(NULL, "\nChecks:");
-     struct arg_lit *opt_no_order_check  = arg_lit0(
+     struct arg_lit *opt_no_order_check = arg_lit0(
           NULL, "no-order-check", 
           "Don't check paired-end read order (otherwise checked every " XSTR(PAIRED_ORDER_SAMPLERATE) " reads)");
      struct arg_lit *opt_no_qual_check  = arg_lit0(
@@ -312,7 +312,7 @@ int parse_args(args_t *args, int argc, char *argv[])
      struct arg_lit *opt_debug  = arg_lit0(
           NULL, "debug", 
           "Print debugging info");
-     struct arg_end *opt_end = arg_end(10); /* maximum number of errors
+     struct arg_end *opt_end = arg_end(20); /* maximum number of errors
                                              * to store */
      
      /* set defaults 
@@ -321,15 +321,17 @@ int parse_args(args_t *args, int argc, char *argv[])
      opt_min5pqual->ival[0] = DEFAULT_MIN5PQUAL;
      opt_min3pqual->ival[0] = DEFAULT_MIN3PQUAL;
      opt_phredoffset->ival[0] = DEFAULT_PHREDOFFSET;
+     opt_split_every->ival[0] = 0;
+     opt_sampling->ival[0] = 0;
 
      void *argtable[] = {rem_files, opt_infq1, opt_infq2, opt_outfq1, opt_outfq2,
                          rem_filtering, opt_no_filter, opt_min5pqual, opt_min3pqual, opt_minreadlen, opt_phredoffset, 
-                         rem_sampling, opt_sampling, opt_split_into,
+                         rem_sampling, opt_sampling, opt_split_every,
                          rem_checks, opt_no_order_check, opt_no_qual_check, 
                          rem_misc, opt_overwrite_output, opt_append_to_output, opt_help, opt_quiet, opt_debug,
                          opt_end};    
      
-     if (arg_nullcheck(argtable)) {
+     if (arg_nullcheck(argtable) != 0) {
           LOG_ERROR("%s\n", "insufficient memory for argtable allocation.");
           return 1;
      }
@@ -454,8 +456,8 @@ int parse_args(args_t *args, int argc, char *argv[])
      }
 #endif
 
-     args->split_into = opt_split_into->ival[0];
-     if (args->split_into>0) {
+     args->split_every = opt_split_every->ival[0];
+     if (args->split_every>0) {
           if (1 != template_mark_counts(args->outfq1)) {
                LOG_ERROR("Need %s exactly once as number template in output filename for requested splitting\n", TEMPLATE_MARK);
                arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));               
@@ -971,6 +973,7 @@ int test()
  */
 int qual_range_is_valid(const kseq_t *seq, const int phredoffset)
 {
+     /* FIXME faster to just check extreme values */
      int i;
      for (i=0; i<seq->qual.l; i++) {
           int q = seq->qual.s[i]-phredoffset;
@@ -1013,7 +1016,7 @@ int replace_template_mark_with_no(char *in, char **out, int split_no) {
 }
 
 
-int open_output_one(gzFile *fp_outfq, char *outfq, 
+int open_output_one(gzFile **fp_outfq, char *outfq, 
                     int append, int overwrite, int split_no) {
      char *fname = NULL;
      char outmode[2];/* output mode for both fq files */
@@ -1049,7 +1052,7 @@ int open_output_one(gzFile *fp_outfq, char *outfq,
           }
           
           (*fp_outfq) = gzopen(fname, outmode);                    
-          /*LOG_WARN("opening fname=%s for split_no=%d\n", fname, split_no);*/
+          LOG_DEBUG("opening fname=%s for split_no=%d\n", fname, split_no);
      }
 
      if (NULL == (*fp_outfq)) {
@@ -1065,16 +1068,14 @@ int open_output_one(gzFile *fp_outfq, char *outfq,
 
 
 /* fq1 one might be stdout. fq2 might be NULL. split_no used if >0 */
-int open_output(gzFile *fp_outfq1, gzFile *fp_outfq2, 
+int open_output(gzFile **fp_outfq1, gzFile **fp_outfq2, 
                 char *outfq1, char *outfq2, 
                 int append, int overwrite, int split_no)
 {
      int rc;
 
-#ifdef TRACE
-    LOG_DEBUG("open_output(): fp_outfq1=%p fp_outfq2=%p outfq1=%s outfq2=%s append=%d overwrite=%d split_no=%d\n", 
-              fp_outfq1, fp_outfq2, outfq1, outfq2, append, overwrite, split_no);
-#endif
+     if (trace) {LOG_DEBUG("open_output(): fp_outfq1=%p fp_outfq2=%p outfq1=%s outfq2=%s append=%d overwrite=%d split_no=%d\n", 
+                           fp_outfq1, fp_outfq2, outfq1, outfq2, append, overwrite, split_no);}
 
     rc = open_output_one(fp_outfq1, outfq1, append, overwrite, split_no);
     if (rc) {
@@ -1093,9 +1094,8 @@ int open_output(gzFile *fp_outfq1, gzFile *fp_outfq2,
 int main(int argc, char *argv[])
 {
     args_t args = { 0 };
-    gzFile fp_infq1 = NULL, fp_infq2 = NULL;
-    gzFile *fp_outfq1_array = NULL, *fp_outfq2_array = NULL;
-    gzFile fp_outfq1 = NULL, fp_outfq2 = NULL;
+    gzFile *fp_infq1 = NULL, *fp_infq2 = NULL;
+    gzFile *fp_outfq1 = NULL, *fp_outfq2 = NULL;
     kseq_t *seq1 = NULL, *seq2 = NULL;
     int len1 = -1, len2 = -1;
     int pe_mode = 0; /* bool paired end mode */
@@ -1103,10 +1103,8 @@ int main(int argc, char *argv[])
     trim_args_t trim_args;
     int rc;
     int read_order_warning_issued = 0;
-    int split_no = 0;
     trim_pos_t *trim_pos_1 = NULL;
     trim_pos_t *trim_pos_2 = NULL;
-    int i;
     
 #ifdef TEST
     return test();
@@ -1147,29 +1145,14 @@ int main(int argc, char *argv[])
     }
 
 
-    fp_outfq1_array = calloc(max(args.split_into, 1), sizeof(gzFile));
-    if (pe_mode) {
-         fp_outfq2_array = calloc(max(args.split_into, 1), sizeof(gzFile));
-    }
-    for (i=0; i<max(args.split_into, 1); i++) {
-         if (args.split_into==0) {
-              split_no = 0;
-         } else {
-              split_no = i+1;
-         }
-         if (open_output(&fp_outfq1, &fp_outfq2,
-                         args.outfq1, args.outfq2,
-                         args.append_to_output, args.overwrite_output, split_no)) {
-                   LOG_ERROR("%s\n", "Couldn't open output files. Exiting...");
-                   free_args(& args);
-                   kseq_destroy(seq1);
-                   return EXIT_FAILURE;
-         }         
-         fp_outfq1_array[i] = fp_outfq1;
-         if (pe_mode) {
-              fp_outfq2_array[i] = fp_outfq2;
-         }
-    }
+    if (open_output(&fp_outfq1, &fp_outfq2,
+                    args.outfq1, args.outfq2,
+                    args.append_to_output, args.overwrite_output, args.split_every>0? 1:0)) {
+         LOG_ERROR("%s\n", "Couldn't open output files. Exiting...");
+         free_args(& args);
+         kseq_destroy(seq1);
+         return EXIT_FAILURE;
+    }         
 
 	seq1 = kseq_init(fp_infq1);
 	if (pe_mode) {
@@ -1279,12 +1262,24 @@ int main(int argc, char *argv[])
           *
           */
 
-         if (args.split_into==0) {
-              split_no = 0;
-         } else {
-              split_no = n_reads_out % args.split_into;
+         if (args.split_every>0) {
+              /* for split every we reopen files if necessary */
+              if ((n_reads_out+1)%args.split_every == 0) {
+                   gzclose(fp_outfq1);
+                   if (pe_mode) {
+                        gzclose(fp_outfq2);
+                   }
+                   if (open_output(&fp_outfq1, &fp_outfq2,
+                                   args.outfq1, args.outfq2,
+                                   args.append_to_output, args.overwrite_output,
+                                   (n_reads_out+1)/args.split_every+1)) {
+                        LOG_ERROR("%s\n", "Couldn't open output files. Exiting...");
+                        return EXIT_FAILURE;
+                   }         
+              }
+              
          }
-         fp_outfq1 = fp_outfq1_array[split_no];
+              
 
          if (0 >= gzprintf_fastq(fp_outfq1, seq1, trim_pos_1)) {
               LOG_ERROR("Couldn't write to %s (after successfully writing"
@@ -1295,7 +1290,6 @@ int main(int argc, char *argv[])
          }
 
          if (pe_mode) {
-              fp_outfq2 = fp_outfq2_array[split_no];
               if (0 >= gzprintf_fastq(fp_outfq2, seq2, trim_pos_2)) {
                    LOG_ERROR("Couldn't write to %s (after successfully"
                              " writing %d reads). %s\n",
@@ -1331,18 +1325,12 @@ free_and_exit:
 
 	kseq_destroy(seq1);
     gzclose(fp_infq1);
-    for (i=0; i<max(args.split_into, 1); i++) {
-         gzclose(fp_outfq1_array[i]);
-    }
-    free(fp_outfq1_array);
+    gzclose(fp_outfq1);
 
     if (pe_mode) {
          kseq_destroy(seq2);
          gzclose(fp_infq2);
-         for (i=0; i<max(args.split_into, 1); i++) {
-              gzclose(fp_outfq2_array[i]);
-         }
-         free(fp_outfq2_array);
+         gzclose(fp_outfq2);
     }
     free_args(& args);
 

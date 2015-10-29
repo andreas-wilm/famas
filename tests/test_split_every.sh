@@ -11,6 +11,7 @@ DEBUG=0
 f1=../data/SRR499813_1.Q2-and-N.fastq.gz
 f2=../data/SRR499813_2.Q2-and-N.fastq.gz
 oext=.fastq.gz
+split_every=1000
 
 
 # should fail of XXXXXX not part of template
@@ -18,7 +19,7 @@ oext=.fastq.gz
 odir=$(mktemp -d -t $0.sh) || exit 1
 o1=$odir/1.$oext
 o2=$odir/2.$oext
-cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-into 10 --quiet --no-filter"
+cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every $split_every --quiet --no-filter"
 if eval $cmd 2>/dev/null; then
     echoerror "The following command should have failed: $cmd"
     exit 1
@@ -29,7 +30,7 @@ fi
 #
 o1=$odir/1-XXXXXX-XXXXXX$oext
 o2=$odir/2-XXXXXX-XXXXXX$oext
-cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-into 10 --quiet --no-filter"
+cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every $split_every --quiet --no-filter"
 if eval $cmd 2>/dev/null; then
     echoerror "The following command should have failed: $cmd"
     exit 1
@@ -44,20 +45,22 @@ odir=$(mktemp -d -t $0.sh) || exit 1
 o1=$odir/1-XXXXXX$oext
 o2=$odir/2-XXXXXX$oext
 #echodebug "odir=$odir o1=$o1 o2=$o2"
-num_splits=10
-cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-into $num_splits --quiet --no-filter"
+cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every $split_every --quiet --no-filter"
 if ! eval $cmd; then
     echoerror "The following command failed: $cmd"
     exit 1
 fi
 
-# check number of splits
-num_out=$(ls $odir/*$oext | wc -l) 
-if [ $num_out -le $num_splits ]; then
-    echoerror "Split unsuccessful: got $num_out files only"
+num_o1=$(ls $(echo $o1 | sed -e 's,XXXXXX,*,') | wc -l)
+num_o2=$(ls $(echo $o1 | sed -e 's,XXXXXX,*,') | wc -l)
+if [ $num_o1 -le 1 ] ; then
+    echoerror "Expected more than one output file"
     exit 1
 fi
-
+if [ $num_o1 -ne $num_o2 ] ; then
+    echoerror "Number of R1 and R2 output files differs"
+    exit 1
+fi
 
 # check content
 f1md5=$(gzip -dc $f1 | sort | $md5)
@@ -72,6 +75,16 @@ if [ $f2md5 != $o2md5 ]; then
     echoerror "Content changed while splitting second file: compare $f1 and $o1"
     exit 1
 fi
+
+# none of these files supposed to have more than split_every reads
+for f in $(ls $(echo $o1 | sed -e 's,XXXXXX,*,')); do
+    num_reads=$(gzip -dc $f | awk 'END {print NR/4}')
+    if [ $num_reads -gt $split_every ]; then
+        echoerror "More than expected reads found in $f"
+        exit 1        
+    fi
+done
+
 
 if [ $DEBUG -eq 1 ]; then
     echodebug "Keeping $odir"
