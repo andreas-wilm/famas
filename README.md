@@ -16,11 +16,11 @@ Installation
 ============
 
 
-Famas depends on [libz](http://www.zlib.net/) ,
+Famas depends on [libz](http://www.zlib.net/),
 [argtable3](http://www.argtable.org) and
 [Heng Li's kseq](http://lh3lh3.users.sourceforge.net/kseq.shtml). The
 latter two come with the famas source and libz is very likely already
-installed in your system.
+installed on your system.
 
 Go the dist directory and download the latest tarball.
 
