@@ -10,7 +10,7 @@ source lib.sh || exit 1
 DEBUG=0
 i=../data/SRR499813_1.Q2-and-N.fastq.gz
 j=../data/SRR499813_2.Q2-and-N.fastq.gz
-odir=$(mktemp -d -t $0.XXXXXX.sh) || exit 1
+odir=$(mktemp -d -t $0..sh.XXX) || exit 1
 #echodebug "odir=$odir"
 o=$odir/o1.fastq.gz
 p=$odir/o2.fastq.gz

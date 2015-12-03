@@ -16,7 +16,7 @@ split_every=1000
 
 # should fail of XXXXXX not part of template
 #
-odir=$(mktemp -d -t $0.XXXXXX.sh) || exit 1
+odir=$(mktemp -d -t $0..sh.XXX) || exit 1
 o1=$odir/1.$oext
 o2=$odir/2.$oext
 cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every $split_every --quiet --no-filter"
@@ -41,7 +41,7 @@ fi
 # the same content (no-filter)
 #
 #
-odir=$(mktemp -d -t $0.XXXXXX.sh) || exit 1
+odir=$(mktemp -d -t $0..sh.XXX) || exit 1
 o1=$odir/1-XXXXXX$oext
 o2=$odir/2-XXXXXX$oext
 #echodebug "odir=$odir o1=$o1 o2=$o2"

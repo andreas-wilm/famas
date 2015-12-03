@@ -14,7 +14,7 @@ f2=../data/SRR499813_2.Q2-and-N.fastq.gz
 oext=.fastq.gz
 
 
-odir=$(mktemp -d -t $0.XXXXXX.sh) || exit 1
+odir=$(mktemp -d -t $0..sh.XXX) || exit 1
 o1=$odir/R1-XXXXXX.$oext
 o2=$odir/R2-XXXXXX.$oext
 valgrind_log=$odir/valgrind.log
