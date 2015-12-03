@@ -14,7 +14,7 @@ f2=../data/SRR499813_2.Q2-and-N.fastq.gz
 oext=.fastq.gz
 
 
-odir=$(mktemp -d -t $0.sh) || exit 1
+odir=$(mktemp -d -t $0.XXXXXX.sh) || exit 1
 o1=$odir/R1-XXXXXX.$oext
 o2=$odir/R2-XXXXXX.$oext
 valgrind_log=$odir/valgrind.log
@@ -24,7 +24,9 @@ valgrind_log=$odir/valgrind.log
 cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every 1000 --sampling 10 --quiet"
 dsym_arg="--dsymutil=yes "
 #dsym_arg=""
-valgrind --log-file=$valgrind_log --track-origins=yes --leak-check=full --tool=memcheck $dsym_arg --show-leak-kinds=all  $cmd || exit 1
+show_leak_arg="--show-leak-kinds=all"
+valgind 2>&1 | grep -q show-leak-kinds=all || show_leak_arg=""
+valgrind --log-file=$valgrind_log --track-origins=yes --leak-check=full --tool=memcheck $dsym_arg $show_leak_arg $cmd || exit 1
  
 
 num_err=$(grep 'ERROR SUMMARY' $valgrind_log | grep -cv ': 0 errors')

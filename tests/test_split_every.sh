@@ -16,7 +16,7 @@ split_every=1000
 
 # should fail of XXXXXX not part of template
 #
-odir=$(mktemp -d -t $0.sh) || exit 1
+odir=$(mktemp -d -t $0.XXXXXX.sh) || exit 1
 o1=$odir/1.$oext
 o2=$odir/2.$oext
 cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every $split_every --quiet --no-filter"
@@ -41,7 +41,7 @@ fi
 # the same content (no-filter)
 #
 #
-odir=$(mktemp -d -t $0.sh) || exit 1
+odir=$(mktemp -d -t $0.XXXXXX.sh) || exit 1
 o1=$odir/1-XXXXXX$oext
 o2=$odir/2-XXXXXX$oext
 #echodebug "odir=$odir o1=$o1 o2=$o2"
@@ -63,10 +63,10 @@ if [ $num_o1 -ne $num_o2 ] ; then
 fi
 
 # check content
-f1md5=$(gzip -dc $f1 | sort | $md5)
-f2md5=$(gzip -dc $f2 | sort | $md5)
-o1md5=$(gzip -dc $(ls $(echo $o1 | sed -e 's,XXXXXX,*,')) | sort | $md5) || exit 1
-o2md5=$(gzip -dc $(ls $(echo $o2 | sed -e 's,XXXXXX,*,')) | sort | $md5) || exit 1
+f1md5=$(gzip -dc $f1 | sort | $md5 | cut -f 1 -d ' ')
+f2md5=$(gzip -dc $f2 | sort | $md5 | cut -f 1 -d ' ')
+o1md5=$(gzip -dc $(ls $(echo $o1 | sed -e 's,XXXXXX,*,')) | sort | $md5 | cut -f 1 -d ' ') || exit 1
+o2md5=$(gzip -dc $(ls $(echo $o2 | sed -e 's,XXXXXX,*,')) | sort | $md5 | cut -f 1 -d ' ') || exit 1
 if [ $f1md5 != $o1md5 ]; then
     echoerror "Content changed while splitting first file: compare $f1 and $o1"
     exit 1
