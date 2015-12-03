@@ -53,7 +53,7 @@ KSEQ_INIT(gzFile, gzread)
 #define DEFAULT_MIN3PQUAL 3
 #endif
 #ifndef DEFAULT_MIN5PQUAL
-#define DEFAULT_MIN5PQUAL 0
+#define DEFAULT_MIN5PQUAL 3
 #endif
 #ifndef DEFAULT_MINREADLEN
 #define DEFAULT_MINREADLEN 30
@@ -565,6 +565,15 @@ int calc_trim_pos(trim_pos_t *trim_pos,
           
      /*LOG_DEBUG("Returning trim_pos->pos3p = %d  trim_pos->pos5p = %d\n", trim_pos->pos3p,  trim_pos->pos5p);*/
      return 0;
+}
+
+
+int trimmed_len(const kseq_t *seq, const trim_pos_t *trim_pos) {
+     if (NULL == trim_pos) {
+          return seq->seq.l;
+     } else {
+          return (trim_pos->pos3p - trim_pos->pos5p + 1);
+     }
 }
 
 
@@ -1105,7 +1114,7 @@ int main(int argc, char *argv[])
     int read_order_warning_issued = 0;
     trim_pos_t *trim_pos_1 = NULL;
     trim_pos_t *trim_pos_2 = NULL;
-    
+    float cma_bases = 0.0; /* cumulative moving average */
 #ifdef TEST
     return test();
 #endif
@@ -1288,7 +1297,11 @@ int main(int argc, char *argv[])
               rc = EXIT_FAILURE;
               goto free_and_exit;
          }
-
+         cma_bases = (trimmed_len(seq1, trim_pos_1) + (n_reads_out * cma_bases))/(float)(n_reads_out+1);
+#if TRACE
+         LOG_DEBUG("trimmed_len(seq1, trim_pos_1)=%d + (n_reads_out=%d * cma_bases=%f))/(float)n_reads_out=%d\n",
+                   trimmed_len(seq1, trim_pos_1), n_reads_out, cma_bases, n_reads_out);
+#endif
          if (pe_mode) {
               if (0 >= gzprintf_fastq(fp_outfq2, seq2, trim_pos_2)) {
                    LOG_ERROR("Couldn't write to %s (after successfully"
@@ -1320,8 +1333,9 @@ free_and_exit:
     free(trim_pos_1);
     free(trim_pos_2);
 
-    LOG_INFO("%d %s in. %d %s out\n", n_reads_in, pe_mode?"pairs":"reads", 
-             n_reads_out, pe_mode?"pairs":"reads");
+    LOG_INFO("Number of %s in\t= %d\n", pe_mode?"pairs":"reads", n_reads_in);
+    LOG_INFO("Number of %s out\t= %d\n", pe_mode?"pairs":"reads", n_reads_out);
+    LOG_INFO("Average length (R1)\t= %.1f\n", cma_bases);
 
 	kseq_destroy(seq1);
     gzclose(fp_infq1);
