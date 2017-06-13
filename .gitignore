@@ -35,7 +35,7 @@ src/argtable3/.dirstamp
 tmp/
 
 # data
-data/*fastq.gz
+# data/*fastq.gz
 
 # misc
 src/famas.dSYM/

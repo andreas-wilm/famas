@@ -16,7 +16,7 @@ o=$odir/o1.fastq.gz
 p=$odir/o2.fastq.gz
 
 
-cmd="$famas -i $i -o $o --quiet --no-filter"
+cmd="$famas -i $i -o $o --quiet"
 if ! eval $cmd 2>log.txt; then
     echoerror "The following command failed: $cmd"
     exit 1
@@ -27,15 +27,14 @@ step=1
 md5_i=$(gzip -dc $i | $md5)
 md5_o=$(gzip -dc $o | $md5)
 if [ $md5_i != $md5_o ]; then
-    echoerror "Content changed even th
-rough we used no filter: compare $i and $o (command was $cmd)"
+    echoerror "Content changed even though we used no filter: compare $i and $o (command was $cmd)"
     exit 1
 fi
 
 
 
 stage="overwrite disabled"
-cmd="$famas -i $i -o $o --quiet --no-filter"
+cmd="$famas -i $i -o $o --quiet"
 if eval $cmd 2>log.txt; then
     echoerror "The following command should have failed ($stage): $cmd"
     exit 1
@@ -45,7 +44,7 @@ fi
 
 # overwrite option should work.
 stage="overwrite enabled"
-cmd="$famas -i $i -o $o --quiet --no-filter --overwrite"
+cmd="$famas -i $i -o $o --quiet --overwrite"
 if ! eval $cmd 2>log.txt; then
     echoerror "The following command failed ($stage): $cmd"
     exit 1
@@ -54,7 +53,7 @@ fi
 
 
 stage="create second file"
-cmd="$famas -i $j -o $p --quiet --no-filter"
+cmd="$famas -i $j -o $p --quiet"
 if ! eval $cmd 2>log.txt; then
     echoerror "The following command failed ($stage): $cmd"
     exit 1
@@ -88,7 +87,7 @@ rm -f $o $p
 # set start -Q, end -q or len -l too low and you get nothing
 
 # Q
-cmd="$famas -i $i -j $j -o $o -p $p --quiet -Q 255 --overwrite"
+cmd="$famas -i $i -j $j -o $o -p $p --quiet -5 255 --overwrite"
 if ! eval $cmd 2>log.txt; then
     echoerror "The following command failed: $cmd"
     exit 1
@@ -103,7 +102,7 @@ fi
 #echodebug "step $step done"; let step=step+1
 
 
-cmd="$famas -i $i -j $j -o $o -p $p --quiet -q 255 --overwrite"
+cmd="$famas -i $i -j $j -o $o -p $p --quiet -3 255 --overwrite"
 if ! eval $cmd 2>log.txt; then
     echoerror "The following command failed: $cmd"
     exit 1
@@ -134,7 +133,7 @@ fi
 
 # set all very low and you get same as input
 #
-cmd="$famas -i $i -j $j -o $o -p $p --quiet -Q 0 -q 0 -l 0 --overwrite"
+cmd="$famas -i $i -j $j -o $o -p $p --quiet -5 0 -3 0 -l 0 --overwrite"
 if ! eval $cmd 2>log.txt; then
     echoerror "The following command  failed: $cmd"
     exit 1
@@ -156,7 +155,7 @@ fi
 
 # default should leave no reads <minlen bp and no Q2 bases '#' at ends
 minlen=40
-cmd="$famas -i $i -j $j -o $o -p $p -l $minlen --quiet -q 3 -Q 3 --overwrite"
+cmd="$famas -i $i -j $j -o $o -p $p -l $minlen --quiet -3 3 -5 3 --overwrite"
 if ! eval $cmd 2>log.txt; then
     echoerror "The following command  failed: $cmd"
     exit 1

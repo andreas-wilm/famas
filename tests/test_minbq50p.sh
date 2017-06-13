@@ -8,8 +8,8 @@ source lib.sh || exit 1
 
 
 DEBUG=0
-i=../data/minbq50p_1.fq.gz
-j=../data/minbq50p_2.fq.gz
+i=../data/minbq50p_1.fastq.gz
+j=../data/minbq50p_2.fastq.gz
 odir=$(mktemp -d -t $0..sh.XXX) || exit 1
 o=$odir/o1.fastq.gz
 p=$odir/o2.fastq.gz

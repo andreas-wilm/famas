@@ -1,5 +1,6 @@
 #!/bin/bash
 
+cd $(dirname $(readlink -f $0 2>/dev/null || echo $0))
 rm -f log.txt
 for f in $(ls test*sh); do
 	echo -n "Running $(basename $f): " | tee -a log.txt

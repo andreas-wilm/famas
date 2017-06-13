@@ -1,6 +1,6 @@
 /* -*- c-file-style: "k&r" -*- 
  *
- * Copyright (C) 2013 Andreas Wilm <andreas.wilm@gmail.com>
+ * Copyright (C) 2013-2017 Andreas Wilm <andreas.wilm@gmail.com>
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -50,13 +50,16 @@ KSEQ_INIT(gzFile, gzread)
  *-DPAIRED_ORDER_SAMPLERATE=2
  */
 #ifndef DEFAULT_MIN3PQUAL
-#define DEFAULT_MIN3PQUAL 3
+#define DEFAULT_MIN3PQUAL 0
 #endif
 #ifndef DEFAULT_MIN5PQUAL
-#define DEFAULT_MIN5PQUAL 3
+#define DEFAULT_MIN5PQUAL 0
 #endif
 #ifndef DEFAULT_MINREADLEN
-#define DEFAULT_MINREADLEN 30
+#define DEFAULT_MINREADLEN 0
+#endif
+#ifndef DEFAULT_MINBQ50P
+#define DEFAULT_MINBQ50P 0
 #endif
 #ifndef DEFAULT_PHREDOFFSET
 #define DEFAULT_PHREDOFFSET 33
@@ -65,7 +68,7 @@ KSEQ_INIT(gzFile, gzread)
 #define PAIRED_ORDER_SAMPLERATE 10000
 #endif
 #ifndef QUAL_CHECK_SAMPLERATE
-#define QUAL_CHECK_SAMPLERATE 1000
+#define QUAL_CHECK_SAMPLERATE 10000
 #endif
 #define EARLY_EXIT_MESSAGE "Don't trust already produced results. Exiting..."
 
@@ -86,17 +89,15 @@ typedef struct {
      char *outfq1;
      char *outfq2;
 
-     int no_filter;
      int min5pqual;
      int min3pqual;
+     int minbq50p;
      int phredoffset;
      int minreadlen;
 
      int sampling;
      int split_every;
 
-     int no_order_check;
-     int no_qual_check;
      int overwrite_output;
      int append_to_output;
 } args_t;
@@ -144,6 +145,11 @@ int trace = 0;
 #define LOG_TEST(fmt, args...)      (void)vout(stderr, "TESTING(%s|%s:%d): " fmt, __FILE__, __FUNCTION__, __LINE__, ## args)
 
 
+/* protoypes
+ */
+int read_below_minbq50p(const kseq_t *seq, const int minbq50p, const int phredoffset);
+
+
 /* Taken from the Linux kernel source and slightly modified.
  */
 int
@@ -180,17 +186,15 @@ void dump_args(const args_t *args)
      LOG_DEBUG("  outfq1             = %s\n", args->outfq1);
      LOG_DEBUG("  outfq2             = %s\n", args->outfq2);
 
-     LOG_DEBUG("  no_filter          = %d\n", args->no_filter);
      LOG_DEBUG("  min5pqual          = %d\n", args->min5pqual);
      LOG_DEBUG("  min3pqual          = %d\n", args->min3pqual);
      LOG_DEBUG("  phredoffset        = %d\n", args->phredoffset);
      LOG_DEBUG("  minreadlen         = %d\n", args->minreadlen);
+     LOG_DEBUG("  minbq50p           = %d\n", args->minbq50p);
 
      LOG_DEBUG("  sampling           = %d\n", args->sampling);
      LOG_DEBUG("  split_every        = %d\n", args->split_every);
 
-     LOG_DEBUG("  no_order_check     = %d\n", args->no_order_check);
-     LOG_DEBUG("  no_qual_check      = %d\n", args->no_qual_check);
      LOG_DEBUG("  overwrite_output     = %d\n", args->overwrite_output);
      LOG_DEBUG("  append_to_output     = %d\n", args->append_to_output);
 }
@@ -259,17 +263,15 @@ int parse_args(args_t *args, int argc, char *argv[])
           "Other output FastQ file if paired-end input (will be gzipped)");
 
      struct arg_rem  *rem_filtering  = arg_rem(NULL, "\nTrimming & Filtering:");
-     struct arg_lit *opt_no_filter  = arg_lit0(
-          NULL, "no-filter", 
-          "Switch all filtering off (none of the options in this sections apply then)");
      struct arg_int *opt_min5pqual = arg_int0(
-          "Q", "min5pqual", "<int>",
+          "5", "min5pqual", "<int>",
           "Trim from start/5'-end if base-call quality is below this value."
           " Default: " XSTR(DEFAULT_MIN5PQUAL));
      struct arg_int *opt_min3pqual = arg_int0(
-          "q", "min3pqual", "<int>",
+          "3", "min3pqual", "<int>",
           "Trim from end/3'-end if base-call quality is below this value (Illumina guidelines recommend 3)."
           " Default: " XSTR(DEFAULT_MIN3PQUAL));
+              
      struct arg_int *opt_phredoffset = arg_int0(
           "e", "phred", "<33|64>",
           "Qualities are ASCII-encoded Phred +33 (e.g. Sanger, SRA,"
@@ -277,8 +279,12 @@ int parse_args(args_t *args, int argc, char *argv[])
           " Default: " XSTR(DEFAULT_PHREDOFFSET));
      struct arg_int *opt_minreadlen = arg_int0(
           "l", "minlen", "<int>",
-          "Discard reads if read length is below this length (discard both reads if"
-          " either is below this limit). Default: " XSTR(DEFAULT_MINREADLEN));
+          "Discard read (pair) if (either) read length after trimming is below this length."
+          " Default: " XSTR(DEFAULT_MINREADLEN));
+     struct arg_int *opt_minbq50p = arg_int0(
+          "m", "minbq50p", "<int>",
+          "Discard reads if >50% of bases have a BQ less or equal than this number."
+          " Applied before other BQ filters. Default: " XSTR(DEFAULT_MINBQ50P));
 
      struct arg_rem *rem_sampling = arg_rem(NULL, "\nSampling:");
      struct arg_int *opt_sampling = arg_int0(
@@ -287,14 +293,6 @@ int parse_args(args_t *args, int argc, char *argv[])
      struct arg_int *opt_split_every = arg_int0(
           "x", "split-every", "<int>",
           "Split every x reads. Requires " TEMPLATE_MARK " in output names, which will be replaced with split number");
-
-     struct arg_rem  *rem_checks  = arg_rem(NULL, "\nChecks:");
-     struct arg_lit *opt_no_order_check = arg_lit0(
-          NULL, "no-order-check", 
-          "Don't check paired-end read order (otherwise checked every " XSTR(PAIRED_ORDER_SAMPLERATE) " reads)");
-     struct arg_lit *opt_no_qual_check  = arg_lit0(
-          NULL, "no-qual-check", 
-          "Don't check quality range (otherwise checked every " XSTR(QUAL_CHECK_SAMPLERATE) " reads)");
 
      struct arg_rem  *rem_misc  = arg_rem(NULL, "\nMisc:");
      struct arg_lit *opt_overwrite_output  = arg_lit0(
@@ -318,6 +316,7 @@ int parse_args(args_t *args, int argc, char *argv[])
      /* set defaults 
       */
      opt_minreadlen->ival[0] = DEFAULT_MINREADLEN;
+     opt_minbq50p->ival[0] = DEFAULT_MINBQ50P;
      opt_min5pqual->ival[0] = DEFAULT_MIN5PQUAL;
      opt_min3pqual->ival[0] = DEFAULT_MIN3PQUAL;
      opt_phredoffset->ival[0] = DEFAULT_PHREDOFFSET;
@@ -325,10 +324,11 @@ int parse_args(args_t *args, int argc, char *argv[])
      opt_sampling->ival[0] = 0;
 
      void *argtable[] = {rem_files, opt_infq1, opt_infq2, opt_outfq1, opt_outfq2,
-                         rem_filtering, opt_no_filter, opt_min5pqual, opt_min3pqual, opt_minreadlen, opt_phredoffset, 
+                         rem_filtering, opt_minbq50p, opt_min5pqual, opt_min3pqual,
+                         opt_minreadlen, opt_phredoffset, 
                          rem_sampling, opt_sampling, opt_split_every,
-                         rem_checks, opt_no_order_check, opt_no_qual_check, 
-                         rem_misc, opt_overwrite_output, opt_append_to_output, opt_help, opt_quiet, opt_debug,
+                         rem_misc, opt_overwrite_output, opt_append_to_output,
+                         opt_help, opt_quiet, opt_debug,
                          opt_end};    
      
      if (arg_nullcheck(argtable) != 0) {
@@ -357,10 +357,6 @@ int parse_args(args_t *args, int argc, char *argv[])
           return 1;
      }
      
-
-     args->no_filter = opt_no_filter->count;
-     args->no_order_check = opt_no_order_check->count;
-     args->no_qual_check = opt_no_qual_check->count;
 
      args->overwrite_output = opt_overwrite_output->count;
      args->append_to_output = opt_append_to_output->count;
@@ -437,6 +433,12 @@ int parse_args(args_t *args, int argc, char *argv[])
           return 1;            
      }
 
+     args->minbq50p = opt_minbq50p->ival[0];
+     if (args->minbq50p<0) {
+          LOG_ERROR("Invalid base quality '%d'\n", args->minbq50p);          
+          arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
+          return 1;            
+     }
      
      args->minreadlen = opt_minreadlen->ival[0];
 #if 0 /* negative values okay. just means no read length filter */
@@ -762,7 +764,7 @@ int test()
      ks->qual.l = strlen(ks->qual.s);
      orig_read_len = strlen(ks->seq.s);
 
-
+     /* LOG_FIXME("ks->name.l=%d ks->seq.l=%d ks->qual.l=%d\n", ks->name.l, ks->seq.l, ks->qual.l); */
      trim_args.min5pqual = 39;
      trim_args.min3pqual = 39;
      trim_args.minreadlen = 6;
@@ -862,7 +864,39 @@ int test()
           return 1;
      }
 
+     strcpy(ks->seq.s,  "AAAAA");
+     ks->seq.l = strlen(ks->seq.s);
+     strcpy(ks->qual.s, "+++++");
 
+
+     strcpy(ks->qual.s, "+++++"); ks->qual.l = strlen(ks->qual.s);
+     if (read_below_minbq50p(ks, 9,  phredoffset)) {
+          LOG_ERROR("%s\n", "Q10 Read should not have been below minbq50p 9");
+          kseq_destroy(ks);
+          return 1;
+     }
+     
+     strcpy(ks->qual.s, "##+++"); ks->qual.l = strlen(ks->qual.s);
+     if (read_below_minbq50p(ks, 3,  phredoffset)) {
+          LOG_ERROR("%s\n", "Mostly Q10 read should not have been below minbq50p 3");
+          kseq_destroy(ks);
+          return 1;
+     }
+     
+     strcpy(ks->qual.s, "##++"); ks->qual.l = strlen(ks->qual.s);
+     if (read_below_minbq50p(ks, 3,  phredoffset)) {
+          LOG_ERROR("%s\n", "Exactly 50% Q10 read should not have been below minbq50p 3");
+          kseq_destroy(ks);
+          return 1;
+     }
+     
+     strcpy(ks->qual.s, "###++"); ks->qual.l = strlen(ks->qual.s);
+     if (! read_below_minbq50p(ks, 3,  phredoffset)) {
+          LOG_ERROR("%s\n", ">50% Q2 read should not have been below minbq50p 2");
+          kseq_destroy(ks);
+          return 1;
+     }
+     
      strcpy(ks->seq.s,  "ACGT");
      ks->seq.l = strlen(ks->seq.s);
      strcpy(ks->qual.s, "5678"); /* Q = 20 21 22 23 */
@@ -924,6 +958,7 @@ int test()
           return 1;
      }
 
+ 
 
 #if 0
       *
@@ -975,6 +1010,24 @@ int test()
      kseq_destroy(ks);
      LOG_TEST("%s\n", "Successfully completed");
      return EXIT_SUCCESS;
+}
+
+
+/* return 1 if >50% bases <=minbq50p
+ */
+int read_below_minbq50p(const kseq_t *seq, const int minbq50p, const int phredoffset)
+{
+     int i;
+     int num_below = 0;
+     for (i=0; i<seq->qual.l; i++) {
+          int q = seq->qual.s[i]-phredoffset;
+          if (q<=minbq50p) {
+               if (++num_below > seq->qual.l/2) {
+                    return 1;
+               }
+          }
+     }
+     return 0;
 }
 
 
@@ -1168,10 +1221,8 @@ int main(int argc, char *argv[])
          seq2 = kseq_init(fp_infq2);
     }
     n_reads_in = n_reads_out = 0;
-    if (! args.no_filter) {
-         trim_pos_1 = malloc(sizeof(trim_pos_t));
-         trim_pos_2 = malloc(sizeof(trim_pos_t));
-    }
+    trim_pos_1 = malloc(sizeof(trim_pos_t));
+    trim_pos_2 = malloc(sizeof(trim_pos_t));
 	while ((len1 = kseq_read(seq1)) >= 0) {
          if (trace) {LOG_DEBUG("Inspecting seq1: %s\n", seq1->name.s);}
 
@@ -1193,14 +1244,24 @@ int main(int argc, char *argv[])
               LOG_DEBUG("Still alive and happily massaging read %d\n", n_reads_in);
          }
 
-         if (! args.no_filter) {
-              trim_pos_1->pos5p = trim_pos_1->pos3p = 1<<20; /* make invalid */
-              trim_pos_2->pos5p = trim_pos_2->pos3p = 1<<20; /* make invalid */
+         /* at this point we get seq1 and if in PE mode also seq2 
+          * minbq50p filtering goes first
+          */
+         if (read_below_minbq50p(seq1, args.minbq50p, args.phredoffset)) {
+              continue;/* drop */
          }
+         if (pe_mode) {
+              if (read_below_minbq50p(seq2, args.minbq50p, args.phredoffset)) {
+                   continue;/* drop */
+              }
+         }
+         
+         trim_pos_1->pos5p = trim_pos_1->pos3p = 1<<20; /* make invalid */
+         trim_pos_2->pos5p = trim_pos_2->pos3p = 1<<20; /* make invalid */
 
          /* quality check: done before trimming to see more reads
           */
-         if (! args.no_qual_check && 1 == (n_reads_in%QUAL_CHECK_SAMPLERATE)) {
+         if (1 == (n_reads_in%QUAL_CHECK_SAMPLERATE)) {
               if (! qual_range_is_valid(seq1, args.phredoffset)) {
                    LOG_ERROR("Read %s has qualities outside valid range (%s). %s\n",
                              seq1->name.s, seq1->qual.s, EARLY_EXIT_MESSAGE);
@@ -1209,15 +1270,14 @@ int main(int argc, char *argv[])
               }
          }
 
-         if (! args.no_filter && calc_trim_pos(
-                  trim_pos_1, seq1, args.phredoffset, &trim_args)) {
+         if (calc_trim_pos(trim_pos_1, seq1, args.phredoffset, &trim_args)) {
               if (trace) {LOG_DEBUG("%s\n", "seq1 to be discarded");}
               continue;
          }
 
 
          if (pe_mode) {
-              if (! args.no_qual_check && 1 == (n_reads_in%QUAL_CHECK_SAMPLERATE)) {
+              if (1 == (n_reads_in%QUAL_CHECK_SAMPLERATE)) {
                    if (! qual_range_is_valid(seq1, args.phredoffset)) {
                         LOG_ERROR("Read %s has qualities outside valid range (%s). %s\n",
                                   seq1->name.s, seq1->qual.s, EARLY_EXIT_MESSAGE);
@@ -1226,16 +1286,14 @@ int main(int argc, char *argv[])
                    }
               }
 
-              if (! args.no_filter && calc_trim_pos(
-                       trim_pos_2, seq2, args.phredoffset, &trim_args)) {
+              if (calc_trim_pos(trim_pos_2, seq2, args.phredoffset, &trim_args)) {
                    if (trace) {LOG_DEBUG("%s\n", "seq2 to be discarded");}
                    continue;
               }
               
               /* read order check (PE only)
                */
-              if (! args.no_order_check && ! read_order_warning_issued
-                  && (1 == (n_reads_in%PAIRED_ORDER_SAMPLERATE))) {
+              if (! read_order_warning_issued && (1 == (n_reads_in%PAIRED_ORDER_SAMPLERATE))) {
                    rc = reads_are_paired(seq1, seq2);
                    if (1 != rc) {
                         if (0 == rc) {

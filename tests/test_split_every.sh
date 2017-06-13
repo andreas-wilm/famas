@@ -19,7 +19,7 @@ split_every=1000
 odir=$(mktemp -d -t $0..sh.XXX) || exit 1
 o1=$odir/1.$oext
 o2=$odir/2.$oext
-cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every $split_every --quiet --no-filter"
+cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every $split_every --quiet"
 if eval $cmd 2>/dev/null; then
     echoerror "The following command should have failed: $cmd"
     exit 1
@@ -30,7 +30,7 @@ fi
 #
 o1=$odir/1-XXXXXX-XXXXXX$oext
 o2=$odir/2-XXXXXX-XXXXXX$oext
-cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every $split_every --quiet --no-filter"
+cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every $split_every --quiet"
 if eval $cmd 2>/dev/null; then
     echoerror "The following command should have failed: $cmd"
     exit 1
@@ -45,7 +45,7 @@ odir=$(mktemp -d -t $0..sh.XXX) || exit 1
 o1=$odir/1-XXXXXX$oext
 o2=$odir/2-XXXXXX$oext
 #echodebug "odir=$odir o1=$o1 o2=$o2"
-cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every $split_every --quiet --no-filter"
+cmd="$famas -i $f1 -j $f2 -o $o1 -p $o2 --split-every $split_every --quiet"
 if ! eval $cmd; then
     echoerror "The following command failed: $cmd"
     exit 1
